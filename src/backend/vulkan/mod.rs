@@ -168,6 +168,10 @@ impl Instance {
 
     /// Creates a new [`Instance`] with some additionally specified extensions.
     ///
+    /// # Panics
+    ///
+    /// - The `max_version` must be at least version 1.1
+    ///
     /// # Safety
     ///
     /// * All valid usage requirements specified by [`vkCreateInstance`](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkCreateInstance.html)
