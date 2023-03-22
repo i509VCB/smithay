@@ -204,19 +204,54 @@ impl TextureMapping for VulkanTextureMapping {
 #[derive(Debug, thiserror::Error)]
 pub enum VulkanError {}
 
-pub struct VulkanImage {}
+#[derive(Debug)]
+pub struct VulkanImage {
+    id: u64,
+    refcount: Arc<AtomicUsize>,
+    width: u32,
+    height: u32,
+    vk_format: vk::Format,
+    drm_format: Option<DrmFourcc>,
+}
 
 impl Texture for VulkanImage {
     fn width(&self) -> u32 {
-        todo!()
+        self.width
     }
 
     fn height(&self) -> u32 {
-        todo!()
+        self.height
     }
 
     fn format(&self) -> Option<DrmFourcc> {
-        todo!()
+        self.drm_format
+    }
+}
+
+impl VulkanImage {
+    pub fn vk_format(&self) -> vk::Format {
+        self.vk_format
+    }
+}
+
+impl Clone for VulkanImage {
+    fn clone(&self) -> Self {
+        self.refcount.fetch_add(1, Ordering::AcqRel);
+
+        Self {
+            id: self.id,
+            refcount: self.refcount.clone(),
+            width: self.width,
+            height: self.height,
+            vk_format: self.vk_format,
+            drm_format: self.drm_format,
+        }
+    }
+}
+
+impl Drop for VulkanImage {
+    fn drop(&mut self) {
+        self.refcount.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
