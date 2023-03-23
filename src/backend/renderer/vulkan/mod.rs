@@ -22,7 +22,7 @@ use gpu_allocator::{
 };
 
 use crate::{
-    backend::vulkan::{Instance, PhysicalDevice},
+    backend::vulkan::{Instance, PhysicalDevice, LIBRARY},
     utils::{Buffer, Physical, Rectangle, Size, Transform},
 };
 
@@ -100,13 +100,17 @@ impl VulkanRenderer {
         };
         let allocator = ManuallyDrop::new(Box::new(Allocator::new(&desc).expect("Handle error")));
 
+        // If the instance has enabled VK_EXT_debug_utils, load the debug utils
+        let debug_utils = instance_
+            .is_extension_enabled(ext::DebugUtils::name())
+            .then(|| ext::DebugUtils::new(LIBRARY.as_ref().unwrap(), &instance));
+
         let renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
             limits,
             allocator,
-            // TODO: Initialize debug utils if available
-            debug_utils: None,
+            debug_utils,
             queue,
             instance: instance_.clone(),
             physical_device,

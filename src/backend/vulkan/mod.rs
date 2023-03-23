@@ -94,7 +94,7 @@ mod phd;
 
 pub mod version;
 
-static LIBRARY: Lazy<Result<Entry, LoadError>> =
+pub static LIBRARY: Lazy<Result<Entry, LoadError>> =
     Lazy::new(|| unsafe { Entry::load().map_err(|_| LoadError) });
 
 /// Error loading the Vulkan library
