@@ -7,14 +7,19 @@ use std::{
     array,
     collections::HashMap,
     fmt,
+    mem::ManuallyDrop,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
-use ash::vk;
+use ash::{extensions::ext, vk};
 use drm_fourcc::DrmFourcc;
+use gpu_allocator::{
+    vulkan::{Allocation, Allocator, AllocatorCreateDesc},
+    AllocatorDebugSettings,
+};
 
 use crate::{
     backend::vulkan::{Instance, PhysicalDevice},
@@ -29,6 +34,15 @@ pub struct VulkanRenderer {
     next_image_id: u64,
 
     limits: Limits,
+
+    /// The memory allocator.
+    ///
+    /// This is wrapped in a [`Box`] to reduce the size of the [`VulkanRenderer`] on the stack.
+    ///
+    /// This is wrapped in a [`ManuallyDrop`]  
+    allocator: ManuallyDrop<Box<Allocator>>,
+
+    debug_utils: Option<ext::DebugUtils>,
 
     queue: vk::Queue,
 
@@ -49,7 +63,6 @@ impl VulkanRenderer {
         let limits = device.limits();
 
         let limits = Limits {
-            max_image_dimension2_d: limits.max_image_dimension2_d,
             max_framebuffer_width: limits.max_framebuffer_width,
             max_framebuffer_height: limits.max_framebuffer_height,
         };
@@ -77,10 +90,23 @@ impl VulkanRenderer {
         // - VUID-vkGetDeviceQueue-queueIndex-00385: Only one queue was created, so index 0 is valid.
         let queue = unsafe { device.get_device_queue(queue_family_index as u32, 0) };
 
+        let desc = AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device.clone(),
+            physical_device,
+            // TODO: Allow configuring debug settings
+            debug_settings: AllocatorDebugSettings::default(),
+            buffer_device_address: false,
+        };
+        let allocator = ManuallyDrop::new(Box::new(Allocator::new(&desc).expect("Handle error")));
+
         let renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
             limits,
+            allocator,
+            // TODO: Initialize debug utils if available
+            debug_utils: None,
             queue,
             instance: instance_.clone(),
             physical_device,
@@ -145,7 +171,9 @@ impl ImportMem for VulkanRenderer {
         data: &[u8],
         region: Rectangle<i32, Buffer>,
     ) -> Result<(), Self::Error> {
-        todo!()
+        // TODO: Validate size of buffer.
+        // TODO: Actually do this
+        Ok(())
     }
 
     fn mem_formats(&self) -> Box<dyn Iterator<Item = DrmFourcc>> {
@@ -294,6 +322,13 @@ impl<'frame> Frame for VulkanFrame<'frame> {
 
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
+        // SAFETY: The render is being dropped, meaning `true` is allowed.
+        unsafe { self.cleanup_images(true) };
+
+        // SAFETY:
+        // The allocator needs to be dropped before the device is destroyed
+        unsafe { ManuallyDrop::drop(&mut self.allocator) };
+
         // SAFETY:
         // - VUID-vkDestroyDevice-device-00378: All child objects were destroyed above
         // - Since Drop requires &mut, destruction of the device is externally synchronized
@@ -311,8 +346,6 @@ impl Drop for VulkanRenderer {
 /// that type is quite large in memory.
 #[derive(Debug)]
 struct Limits {
-    /// [`vk::PhysicalDeviceLimits::max_image_dimension2_d`]
-    max_image_dimension2_d: u32,
     /// [`vk::PhysicalDeviceLimits::max_framebuffer_width`]
     max_framebuffer_width: u32,
     /// [`vk::PhysicalDeviceLimits::max_framebuffer_height`]
@@ -339,7 +372,7 @@ struct ImageInfo {
     ///
     /// This will be [`None`] if the renderer does not own the image.
     // TODO: This may be multiple instances of device memory for imported textures.
-    underlying_memory: Option<vk::DeviceMemory>,
+    underlying_memory: Option<Allocation>,
 }
 
 impl fmt::Debug for ImageInfo {
@@ -349,7 +382,7 @@ impl fmt::Debug for ImageInfo {
             .field("renderer_id", &self.renderer_id)
             .field("refcount", &self.refcount.load(Ordering::Relaxed))
             .field("image", &self.image)
-            .field("underlying_memory", &self.underlying_memory)
+            .field("allocation", &self.underlying_memory)
             .finish()
     }
 }

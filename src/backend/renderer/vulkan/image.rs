@@ -1,7 +1,18 @@
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::{
+    ffi::CString,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
-use ash::vk;
+use ash::vk::{self, Handle};
 use drm_fourcc::DrmFourcc;
+use gpu_allocator::{
+    vulkan::{AllocationCreateDesc, AllocationScheme},
+    MemoryLocation,
+};
+use scopeguard::ScopeGuard;
 
 use crate::{
     backend::{allocator::vulkan, renderer::vulkan::ImageInfo},
@@ -133,9 +144,52 @@ impl VulkanRenderer {
             // .queue_family_indices(queue_family_indices)
             .initial_layout(vk::ImageLayout::UNDEFINED);
 
-        let image = unsafe { self.device.create_image(&create_info, None) }.expect("Handle error");
+        // Create a scope guard to prevent memory leaks if future Vulkan commands fail.
+        let image = scopeguard::guard(
+            unsafe { self.device.create_image(&create_info, None) }.expect("Handle error"),
+            |image| unsafe { self.device.destroy_image(image, None) },
+        );
 
-        // TODO: Bind memory to the image
+        // SAFETY: The image was just created and has no bound memory.
+        let requirements = unsafe { self.device.get_image_memory_requirements(*image) };
+        let name = format!("Memory Image {}", self.next_image_id);
+
+        // Create a scope guard to prevent memory leaks if future Vulkan commands fail.
+        let allocation = scopeguard::guard(
+            self.allocator
+                .allocate(&AllocationCreateDesc {
+                    name: &name,
+                    requirements,
+                    location: MemoryLocation::GpuOnly,
+                    // optimal tiling
+                    linear: false,
+                    allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+                })
+                .expect("Handle error"),
+            |allocation| {
+                self.allocator
+                    .free(allocation)
+                    .expect("Handle error: Error while freeing failed allocation")
+            },
+        );
+
+        unsafe {
+            self.device
+                .bind_image_memory(*image, allocation.memory(), allocation.offset())
+        }
+        .expect("Handle error");
+
+        // Attach a name to allow for easier debugging with tools like Renderdoc
+        if let Some(ref debug_utils) = self.debug_utils {
+            let name = CString::new(name).expect("Unreachable");
+            let name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
+                .object_handle(image.as_raw())
+                .object_type(vk::ObjectType::IMAGE)
+                .object_name(&name);
+
+            unsafe { debug_utils.set_debug_utils_object_name(self.device.handle(), &name_info) }
+                .expect("Handle error");
+        }
 
         let id = self.next_image_id;
         self.next_image_id += 1;
@@ -145,8 +199,9 @@ impl VulkanRenderer {
             renderer_id: 0, // TODO
             // Initialize with a refcount of 1 since a new image handle is being created.
             refcount: Arc::new(AtomicUsize::new(1)),
-            image,
-            underlying_memory: None,
+            // Image creation was successful, disarm the scope guards.
+            image: ScopeGuard::into_inner(image),
+            underlying_memory: Some(ScopeGuard::into_inner(allocation)),
         });
 
         let image = VulkanImage {
@@ -159,5 +214,47 @@ impl VulkanRenderer {
         };
 
         Ok(image)
+    }
+
+    /// Performs cleanup on image resources.
+    ///
+    /// # Safety
+    ///
+    /// If `destroy` is [`true`] then the renderer must getting dropped.
+    pub(super) unsafe fn cleanup_images(&mut self, destroy: bool) {
+        // TODO: Use HashMap::drain_filter when stabilized
+        let keys = self
+            .images
+            .iter()
+            .filter(|(_, info)| {
+                // Handle destroy for drop
+                let mut destroy = destroy;
+
+                // If the refcount of the image has reached 0 then all image handles have been dropped and
+                // the image is not being used in any commands.
+                destroy |= info.refcount.load(Ordering::Acquire) > 0;
+                destroy
+            })
+            .map(|(key, _)| key)
+            .copied()
+            .collect::<Vec<_>>();
+
+        for key in keys {
+            if let Some(image_data) = self.images.remove(&key) {
+                // TODO: For guest image check if the renderer owns the image.
+                unsafe {
+                    // TODO: VUID-vkDestroyImage-image-01000 - If destroy is `true`, the currently executing command must finish
+                    // VUID-vkDestroyImage-image-04882: Not a swapchain image
+                    self.device.destroy_image(image_data.image, None);
+                }
+
+                if let Some(allocation) = image_data.underlying_memory {
+                    // If the image owns it's memory, free the memory as well
+                    self.allocator
+                        .free(allocation)
+                        .expect("Error while freeing image allocation");
+                }
+            }
+        }
     }
 }
