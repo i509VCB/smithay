@@ -55,6 +55,22 @@ pub struct VulkanRenderer {
     device: Arc<ash::Device>,
 }
 
+impl fmt::Debug for VulkanRenderer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VulkanRenderer")
+            .field("images", &self.images)
+            .field("next_image_id", &self.next_image_id)
+            .field("limits", &self.limits)
+            .field("allocator", &*self.allocator)
+            // .field("debug_utils", &self.debug_utils)
+            .field("queue", &self.queue)
+            .field("instance", &self.instance)
+            .field("physical_device", &self.physical_device)
+            .field("device", &self.device.handle())
+            .finish()
+    }
+}
+
 impl VulkanRenderer {
     pub fn new(device: &PhysicalDevice) -> Result<Self, VulkanError> {
         let physical_device = device.handle();
