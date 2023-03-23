@@ -39,7 +39,7 @@ pub struct VulkanRenderer {
     ///
     /// This is wrapped in a [`Box`] to reduce the size of the [`VulkanRenderer`] on the stack.
     ///
-    /// This is wrapped in a [`ManuallyDrop`]  
+    /// This is must be [`ManuallyDrop`]ed to ensure the allocator is not dropped before the device.  
     allocator: ManuallyDrop<Box<Allocator>>,
 
     debug_utils: Option<ext::DebugUtils>,
