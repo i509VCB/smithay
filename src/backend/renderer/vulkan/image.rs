@@ -19,7 +19,7 @@ use crate::{
     utils::{Buffer, Size},
 };
 
-use super::{VulkanError, VulkanImage, VulkanRenderer};
+use super::{ImageAllocationType, VulkanError, VulkanImage, VulkanRenderer};
 
 impl VulkanRenderer {
     /// Validate image parameters shared by all types of vulkan images created by the renderer.
@@ -201,7 +201,7 @@ impl VulkanRenderer {
             refcount: Arc::new(AtomicUsize::new(1)),
             // Image creation was successful, disarm the scope guards.
             image: ScopeGuard::into_inner(image),
-            underlying_memory: Some(ScopeGuard::into_inner(allocation)),
+            underlying_memory: Some(ImageAllocationType::Allocator(ScopeGuard::into_inner(allocation))),
         });
 
         let image = VulkanImage {
@@ -248,11 +248,15 @@ impl VulkanRenderer {
                     self.device.destroy_image(image_data.image, None);
                 }
 
+                // If the image owns it's memory, free the memory as well
                 if let Some(allocation) = image_data.underlying_memory {
-                    // If the image owns it's memory, free the memory as well
-                    self.allocator
-                        .free(allocation)
-                        .expect("Error while freeing image allocation");
+                    match allocation {
+                        ImageAllocationType::Allocator(allocation) => {
+                            self.allocator
+                                .free(allocation)
+                                .expect("Error while freeing image allocation");
+                        }
+                    }
                 }
             }
         }

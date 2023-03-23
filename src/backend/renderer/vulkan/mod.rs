@@ -356,6 +356,14 @@ struct Limits {
     max_framebuffer_height: u32,
 }
 
+/// The type of allocation an image is backed by.
+#[derive(Debug)]
+enum ImageAllocationType {
+    /// The backing memory was allocated using the [`Allocator`].
+    Allocator(Allocation),
+    // TODO: Imported
+}
+
 struct ImageInfo {
     /// The internal id of the image.
     id: u64,
@@ -376,7 +384,7 @@ struct ImageInfo {
     ///
     /// This will be [`None`] if the renderer does not own the image.
     // TODO: This may be multiple instances of device memory for imported textures.
-    underlying_memory: Option<Allocation>,
+    underlying_memory: Option<ImageAllocationType>,
 }
 
 impl fmt::Debug for ImageInfo {
