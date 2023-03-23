@@ -163,6 +163,8 @@ impl VulkanRenderer {
                     location: MemoryLocation::GpuOnly,
                     // optimal tiling
                     linear: false,
+                    // TODO: Use dedicated allocations if VK_KHR_dedicated_allocation is enabled
+                    // and if preferable per https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkMemoryDedicatedRequirementsKHR.html
                     allocation_scheme: AllocationScheme::GpuAllocatorManaged,
                 })
                 .expect("Handle error"),
