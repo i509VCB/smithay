@@ -22,7 +22,10 @@ use gpu_allocator::{
 };
 
 use crate::{
-    backend::vulkan::{Instance, PhysicalDevice, LIBRARY},
+    backend::{
+        allocator::format,
+        vulkan::{Instance, PhysicalDevice, LIBRARY},
+    },
     utils::{Buffer, Physical, Rectangle, Size, Transform},
 };
 
@@ -191,8 +194,29 @@ impl ImportMem for VulkanRenderer {
         data: &[u8],
         region: Rectangle<i32, Buffer>,
     ) -> Result<(), Self::Error> {
-        // TODO: Validate size of buffer.
-        // TODO: Actually do this
+        // Region bounds
+        if region.loc.x < 0
+            || region.loc.y < 0
+            || region.size.w < 0
+            || region.size.h < 0
+            || region.size.w as u32 > texture.width()
+            || region.size.h as u32 > texture.height()
+        {
+            todo!("Error with bounds")
+        }
+
+        let fourcc = texture
+            .format()
+            .expect("Remove message when non ImportMem buffers are forbidden");
+        let _vk_format = texture.vk_format();
+
+        let bpp = format::get_bpp(fourcc).expect("Handle unknown format");
+        // In theory bpp / 8 could be technically wrong if the bpp had with a remainder when divided by 8
+        let min_size = (bpp / 8) * texture.width() as usize * texture.height() as usize;
+        let _data = data.get(0..min_size).expect("Handle error: Too small");
+
+        // TODO: Forbid non ImportMem buffers.
+
         Ok(())
     }
 
