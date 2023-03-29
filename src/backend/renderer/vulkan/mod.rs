@@ -76,6 +76,22 @@ impl fmt::Debug for VulkanRenderer {
 
 impl VulkanRenderer {
     pub fn new(device: &PhysicalDevice) -> Result<Self, VulkanError> {
+        // Check if the required extensions are available
+        //
+        // TODO: Is this too restrictive?
+        // The Vulkan specification says the following in the specification about VkMemoryDedicatedRequirements:
+        // > requiresDedicatedAllocation may be VK_TRUE if the image’s tiling is VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT.
+        //
+        // If the implementation does not support VK_KHR_dedicated_allocation it may be entirely possible that
+        // ImportDma would be supported but is actually unusable. If this were to become optional for ImportDma
+        // then there would need to be addition tests on formats and modifiers to determine if the ImportDma
+        // implementation is even worth advertising support for.
+        //
+        // For reference wlroots always requires VK_KHR_dedicated_allocation for dmabuf import.
+        if !device.has_device_extension(vk::KhrDedicatedAllocationFn::name()) {
+            todo!("Missing extensions")
+        }
+
         let physical_device = device.handle();
         let instance_ = device.instance();
         let instance = device.instance().handle();
@@ -99,11 +115,22 @@ impl VulkanRenderer {
             .queue_priorities(&[1.0])
             .build();
 
-        let create_info =
-            vk::DeviceCreateInfo::builder().queue_create_infos(array::from_ref(&queue_create_info));
+        let extensions = vec![vk::KhrDedicatedAllocationFn::name()];
+        // Note: The `extensions` must live until after the device is created.
+        let extensions_ptr = extensions.iter().map(|str| str.as_ptr()).collect::<Vec<_>>();
+
+        let create_info = vk::DeviceCreateInfo::builder()
+            .enabled_extension_names(&extensions_ptr)
+            .queue_create_infos(array::from_ref(&queue_create_info));
         // SAFETY: TODO
         let device =
             unsafe { instance.create_device(physical_device, &create_info, None) }.expect("Handle error");
+
+        // Now that the device was created we can safely drop the `extensions`. We drop the Vec of pointers
+        // as well to prevent misuse.
+        drop(extensions_ptr);
+        drop(extensions);
+
         // SAFETY:
         // - VUID-vkGetDeviceQueue-queueFamilyIndex-00384: Queue family index was specified when device was created.
         // - VUID-vkGetDeviceQueue-queueIndex-00385: Only one queue was created, so index 0 is valid.

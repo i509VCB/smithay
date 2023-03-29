@@ -150,9 +150,34 @@ impl VulkanRenderer {
             |image| unsafe { self.device.destroy_image(image, None) },
         );
 
+        let image_requirements_info = vk::ImageMemoryRequirementsInfo2::builder()
+            // This clone is free but we do not want to drop the scopeguard.
+            .image(image.clone());
+        let mut dedicated_requirements = vk::MemoryDedicatedRequirements::default();
+        let mut requirements = vk::MemoryRequirements2::builder().push_next(&mut dedicated_requirements);
+
         // SAFETY: The image was just created and has no bound memory.
-        let requirements = unsafe { self.device.get_image_memory_requirements(*image) };
+        unsafe {
+            self.device
+                .get_image_memory_requirements2(&image_requirements_info, &mut requirements)
+        };
         let name = format!("Memory Image {}", self.next_image_id);
+
+        // In order to avoid borrowing conflicts take the base requirements out ahead of time.
+        let requirements = requirements.memory_requirements;
+
+        // If the driver requires a dedicated allocation then we have no other choice.
+        let allocation_scheme = if dedicated_requirements.requires_dedicated_allocation == vk::TRUE ||
+            // If the driver prefers a dedicated allocation then use a dedicated allocation.
+            //
+            // On Unix-like platforms we aren't too concerned about running out of allocations unlike windows
+            // where the max allocation count is around 4096.
+            dedicated_requirements.prefers_dedicated_allocation == vk::TRUE
+        {
+            AllocationScheme::DedicatedImage(image.clone())
+        } else {
+            AllocationScheme::GpuAllocatorManaged
+        };
 
         // Create a scope guard to prevent memory leaks if future Vulkan commands fail.
         let allocation = scopeguard::guard(
@@ -163,9 +188,7 @@ impl VulkanRenderer {
                     location: MemoryLocation::GpuOnly,
                     // optimal tiling
                     linear: false,
-                    // TODO: Use dedicated allocations if VK_KHR_dedicated_allocation is enabled
-                    // and if preferable per https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkMemoryDedicatedRequirementsKHR.html
-                    allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+                    allocation_scheme,
                 })
                 .expect("Handle error"),
             |allocation| {
