@@ -2,10 +2,11 @@
 #![allow(missing_docs)]
 
 mod image;
+mod staging;
 
 use std::{
     array,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt,
     mem::ManuallyDrop,
     sync::{
@@ -38,6 +39,11 @@ pub struct VulkanRenderer {
 
     limits: Limits,
 
+    /// Data associated with the staging buffer.
+    ///
+    /// This will be [`Some`] if a buffer upload or download has been recorded and until a frame is submitted.
+    staging: Option<Staging>,
+
     /// The memory allocator.
     ///
     /// This is wrapped in a [`Box`] to reduce the size of the [`VulkanRenderer`] on the stack.
@@ -48,6 +54,11 @@ pub struct VulkanRenderer {
     debug_utils: Option<ext::DebugUtils>,
 
     queue: vk::Queue,
+
+    command_pool: vk::CommandPool,
+
+    /// Command buffers are recycled and placed in this queue when a command buffer finishes execution.
+    command_buffers: VecDeque<vk::CommandBuffer>,
 
     instance: Instance,
 
@@ -64,9 +75,11 @@ impl fmt::Debug for VulkanRenderer {
             .field("images", &self.images)
             .field("next_image_id", &self.next_image_id)
             .field("limits", &self.limits)
-            .field("allocator", &*self.allocator)
+            .field("allocator", &self.allocator)
             // .field("debug_utils", &self.debug_utils)
             .field("queue", &self.queue)
+            .field("command_pool", &self.command_pool)
+            .field("command_buffers", &self.command_buffers)
             .field("instance", &self.instance)
             .field("physical_device", &self.physical_device)
             .field("device", &self.device.handle())
@@ -151,13 +164,31 @@ impl VulkanRenderer {
             .is_extension_enabled(ext::DebugUtils::name())
             .then(|| ext::DebugUtils::new(LIBRARY.as_ref().unwrap(), &instance));
 
+        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .queue_family_index(queue_family_index as u32)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
+            .expect("TODO: Handle error");
+
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_buffer_count(4)
+            .command_pool(command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY);
+        let command_buffers = VecDeque::from(
+            unsafe { device.allocate_command_buffers(&command_buffer_allocate_info) }
+                .expect("TODO: Handle error"),
+        );
+
         let renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
             limits,
+            staging: None,
             allocator,
             debug_utils,
             queue,
+            command_pool,
+            command_buffers,
             instance: instance_.clone(),
             physical_device,
             device: Arc::new(device),
@@ -243,6 +274,25 @@ impl ImportMem for VulkanRenderer {
         let _data = data.get(0..min_size).expect("Handle error: Too small");
 
         // TODO: Forbid non ImportMem buffers.
+        self.init_staging()?;
+
+        let image = self.images.get(&texture.id).expect("Not possible");
+
+        // Initializing the staging buffers can fail, defer incrementing the refcount until after the staging
+        // buffer has been allocated, mapped, command was recorded.
+
+        // TODO: Suballocate a buffer for upload (CpuToGpu).
+        // TODO: Start recording if not already done.
+        // TODO: Record copy command with image as target.
+
+        let image_refcount = image.refcount.clone();
+        image_refcount.fetch_add(1, Ordering::Acquire);
+
+        self.staging
+            .as_mut()
+            .unwrap()
+            .uploads
+            .push(Upload { image_refcount });
 
         Ok(())
     }
@@ -400,6 +450,9 @@ impl Drop for VulkanRenderer {
         // The allocator needs to be dropped before the device is destroyed
         unsafe { ManuallyDrop::drop(&mut self.allocator) };
 
+        // SAFETY: TODO: VUID-vkDestroyCommandPool-commandPool-00041
+        unsafe { self.device.destroy_command_pool(self.command_pool, None) };
+
         // SAFETY:
         // - VUID-vkDestroyDevice-device-00378: All child objects were destroyed above
         // - Since Drop requires &mut, destruction of the device is externally synchronized
@@ -464,4 +517,27 @@ impl fmt::Debug for ImageInfo {
             .field("allocation", &self.underlying_memory)
             .finish()
     }
+}
+
+#[derive(Debug)]
+struct Upload {
+    /// The refcount of the image.
+    ///
+    /// This is used to keep the image alive until the commands are uploaded and submitted.
+    image_refcount: Arc<AtomicUsize>,
+}
+
+#[derive(Debug)]
+struct Staging {
+    /// The staging command buffer.
+    command_buffer: vk::CommandBuffer,
+    uploads: Vec<Upload>,
+}
+
+/// Information about in flight commands.
+///
+/// This type notably keeps objects alive that cannot be destroyed until command execution has finished.
+struct InFlight {
+    // TODO: A way to check if the command is executed (fence or timeline semaphore)
+    command_buffer: vk::CommandBuffer,
 }
