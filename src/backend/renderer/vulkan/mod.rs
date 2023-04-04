@@ -4,6 +4,12 @@
 mod image;
 mod staging;
 
+// TODO: Per frame cleanup
+// TODO: Reset command buffers from Executing when destructured
+// TODO: Buffer allocation for staging.
+// TODO: Use VK_KHR_synchronization2 if available
+// TODO: Common function to clean up an `Executing` instance (see VulkanRenderer::drop).
+
 use std::{
     array,
     collections::{HashMap, VecDeque},
@@ -59,6 +65,9 @@ pub struct VulkanRenderer {
 
     /// Command buffers are recycled and placed in this queue when a command buffer finishes execution.
     command_buffers: VecDeque<vk::CommandBuffer>,
+
+    /// Data associated with currently executing commands
+    executing: VecDeque<Executing>,
 
     instance: Instance,
 
@@ -189,12 +198,44 @@ impl VulkanRenderer {
             queue,
             command_pool,
             command_buffers,
+            executing: VecDeque::with_capacity(command_buffer_allocate_info.command_buffer_count as usize),
             instance: instance_.clone(),
             physical_device,
             device: Arc::new(device),
         };
 
         Ok(renderer)
+    }
+
+    pub fn submit_staging_buffers(&mut self) -> Result<(), VulkanError> {
+        // TODO: Return a syncobj
+        let Some(Staging { command_buffer, uploads }) = self.staging.take() else {
+            // Nothing to submit
+            return Ok(());
+        };
+
+        // VUID-vkQueueSubmit-pCommandBuffers-00070: Finish recording the command buffer
+        unsafe { self.device.end_command_buffer(command_buffer) }.expect("Handle error");
+
+        let submit_info = vk::SubmitInfo::builder()
+            .command_buffers(array::from_ref(&command_buffer))
+            .build();
+
+        let in_flight = Executing {
+            command_buffer,
+            uploads,
+            refcounts_dropped: false,
+        };
+
+        unsafe {
+            self.device
+                .queue_submit(self.queue, array::from_ref(&submit_info), vk::Fence::null())
+                .expect("Handle error");
+        }
+
+        self.executing.push_back(in_flight);
+
+        Ok(())
     }
 }
 
@@ -207,15 +248,15 @@ impl Renderer for VulkanRenderer {
         todo!("Smithay needs a global renderer id counter")
     }
 
-    fn downscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
+    fn downscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
         todo!()
     }
 
-    fn upscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
+    fn upscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
         todo!()
     }
 
-    fn set_debug_flags(&mut self, flags: DebugFlags) {
+    fn set_debug_flags(&mut self, _flags: DebugFlags) {
         todo!()
     }
 
@@ -225,8 +266,8 @@ impl Renderer for VulkanRenderer {
 
     fn render(
         &mut self,
-        output_size: Size<i32, Physical>,
-        dst_transform: Transform,
+        _output_size: Size<i32, Physical>,
+        _dst_transform: Transform,
     ) -> Result<Self::Frame<'_>, Self::Error> {
         todo!()
     }
@@ -288,11 +329,14 @@ impl ImportMem for VulkanRenderer {
         let image_refcount = image.refcount.clone();
         image_refcount.fetch_add(1, Ordering::Acquire);
 
-        self.staging
-            .as_mut()
-            .unwrap()
-            .uploads
-            .push(Upload { image_refcount });
+        self.staging.as_mut().unwrap().uploads.push(Upload {
+            image_refcount,
+            id: image.id,
+            // TODO
+            cpu: vk::Buffer::null(),
+            // TODO
+            gpu: vk::Buffer::null(),
+        });
 
         Ok(())
     }
@@ -307,27 +351,28 @@ impl ExportMem for VulkanRenderer {
 
     fn copy_framebuffer(
         &mut self,
-        region: Rectangle<i32, Buffer>,
+        _region: Rectangle<i32, Buffer>,
     ) -> Result<Self::TextureMapping, Self::Error> {
         todo!()
     }
 
     fn copy_texture(
         &mut self,
-        texture: &Self::TextureId,
-        region: Rectangle<i32, Buffer>,
+        _texture: &Self::TextureId,
+        _region: Rectangle<i32, Buffer>,
     ) -> Result<Self::TextureMapping, Self::Error> {
         todo!()
     }
 
     fn map_texture<'a>(
         &mut self,
-        texture_mapping: &'a Self::TextureMapping,
+        _texture_mapping: &'a Self::TextureMapping,
     ) -> Result<&'a [u8], Self::Error> {
         todo!()
     }
 }
 
+#[derive(Debug)]
 pub struct VulkanTextureMapping {}
 
 impl Texture for VulkanTextureMapping {
@@ -404,6 +449,7 @@ impl Drop for VulkanImage {
     }
 }
 
+#[derive(Debug)]
 pub struct VulkanFrame<'frame> {
     _marker: std::marker::PhantomData<&'frame ()>,
 }
@@ -416,18 +462,18 @@ impl<'frame> Frame for VulkanFrame<'frame> {
         todo!()
     }
 
-    fn clear(&mut self, color: [f32; 4], at: &[Rectangle<i32, Physical>]) -> Result<(), Self::Error> {
+    fn clear(&mut self, _color: [f32; 4], _at: &[Rectangle<i32, Physical>]) -> Result<(), Self::Error> {
         todo!()
     }
 
     fn render_texture_from_to(
         &mut self,
-        texture: &Self::TextureId,
-        src: Rectangle<f64, Buffer>,
-        dst: Rectangle<i32, Physical>,
-        damage: &[Rectangle<i32, Physical>],
-        src_transform: Transform,
-        alpha: f32,
+        _texture: &Self::TextureId,
+        _src: Rectangle<f64, Buffer>,
+        _dst: Rectangle<i32, Physical>,
+        _damage: &[Rectangle<i32, Physical>],
+        _src_transform: Transform,
+        _alpha: f32,
     ) -> Result<(), Self::Error> {
         todo!()
     }
@@ -443,6 +489,15 @@ impl<'frame> Frame for VulkanFrame<'frame> {
 
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
+        // TODO: This could be better.
+        let _ = unsafe { self.device.device_wait_idle() };
+
+        // TODO: Move this to a common function.
+        for mut executed in self.executing.drain(..) {
+            // SAFETY: We just waited for the device to become idle.
+            unsafe { executed.refcounts_dropped() };
+        }
+
         // SAFETY: The render is being dropped, meaning `true` is allowed.
         unsafe { self.cleanup_images(true) };
 
@@ -525,19 +580,61 @@ struct Upload {
     ///
     /// This is used to keep the image alive until the commands are uploaded and submitted.
     image_refcount: Arc<AtomicUsize>,
+
+    /// The image id of the image being uploaded.
+    id: u64,
+
+    /// The CPU side buffer.
+    cpu: vk::Buffer,
+
+    /// The GPU side buffer.
+    gpu: vk::Buffer,
 }
 
 #[derive(Debug)]
 struct Staging {
     /// The staging command buffer.
     command_buffer: vk::CommandBuffer,
+
+    /// Pending upload commands.
     uploads: Vec<Upload>,
+    // TODO: Download commands
 }
 
-/// Information about in flight commands.
+/// Information about executing commands.
 ///
 /// This type notably keeps objects alive that cannot be destroyed until command execution has finished.
-struct InFlight {
+#[derive(Debug)]
+struct Executing {
     // TODO: A way to check if the command is executed (fence or timeline semaphore)
     command_buffer: vk::CommandBuffer,
+
+    /// Upload commands that are executing.
+    uploads: Vec<Upload>,
+
+    /// Whether the object reference counts were dropped.
+    ///
+    /// This is only used for debugging purposes.
+    refcounts_dropped: bool,
+}
+
+impl Executing {
+    /// Mark the refcounts used to keep Vulkan objects alive as dropped.
+    ///
+    /// # Safety
+    ///
+    /// - The command buffer must not be executing.
+    /// - This should only be called once.
+    unsafe fn refcounts_dropped(&mut self) {
+        self.refcounts_dropped = true;
+    }
+}
+
+impl Drop for Executing {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.refcounts_dropped,
+            "Executing command info was dropped before refcounts were released"
+        );
+    }
 }

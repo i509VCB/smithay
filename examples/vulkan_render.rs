@@ -22,4 +22,6 @@ fn main() {
             false,
         )
         .expect("Failed to create image");
+
+    renderer.submit_staging_buffers().unwrap();
 }
