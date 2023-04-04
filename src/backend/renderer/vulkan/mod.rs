@@ -221,7 +221,8 @@ impl VulkanRenderer {
             .command_buffers(array::from_ref(&command_buffer))
             .build();
 
-        let in_flight = Executing {
+        // FIXME: What if submitting fails? How are we supposed to respond
+        let executing = Executing {
             command_buffer,
             uploads,
             refcounts_dropped: false,
@@ -233,7 +234,7 @@ impl VulkanRenderer {
                 .expect("Handle error");
         }
 
-        self.executing.push_back(in_flight);
+        self.executing.push_back(executing);
 
         Ok(())
     }
