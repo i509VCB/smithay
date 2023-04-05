@@ -10,6 +10,18 @@ mod staging;
 // TODO: Use VK_KHR_synchronization2 if available
 // TODO: Common function to clean up an `Executing` instance (see VulkanRenderer::drop).
 
+// TODO: Document when more concrete
+// Required extensions:
+// - VK_KHR_dedicated_allocation
+//
+// Not required but nice to have:
+// - VK_KHR_maintenance4
+//
+// Required for ImportDma and ExportDma
+// - VK_KHR_external_memory_fd
+// - VK_EXT_external_memory_dma_buf
+// - VK_EXT_image_drm_format_modifier
+
 use std::{
     array,
     collections::{HashMap, VecDeque},
@@ -67,7 +79,12 @@ pub struct VulkanRenderer {
     command_buffers: VecDeque<vk::CommandBuffer>,
 
     /// Data associated with currently executing commands
-    executing: VecDeque<Executing>,
+    executing: VecDeque<Submission>,
+
+    staging_buffers: VecDeque<StagingBuffer>,
+
+    /// Ids of images pending destruction.
+    images_pending_destruction: Vec<u64>,
 
     instance: Instance,
 
@@ -119,9 +136,22 @@ impl VulkanRenderer {
         let instance = device.instance().handle();
         let limits = device.limits();
 
+        let max_buffer_size = if device.has_device_extension(vk::KhrMaintenance4Fn::name()) {
+            let mut maintenance4 = vk::PhysicalDeviceMaintenance4Properties::default();
+            let mut props2 = vk::PhysicalDeviceProperties2::builder().push_next(&mut maintenance4);
+
+            // SAFETY: VK_KHR_maintenance4 is supported by the device.
+            unsafe { device.get_properties(&mut props2) }
+            maintenance4.max_buffer_size
+        } else {
+            // We don't know what the driver's maximum buffer size is.
+            vk::DeviceSize::MAX
+        };
+
         let limits = Limits {
             max_framebuffer_width: limits.max_framebuffer_width,
             max_framebuffer_height: limits.max_framebuffer_height,
+            max_buffer_size,
         };
 
         // Select a queue
@@ -188,7 +218,7 @@ impl VulkanRenderer {
                 .expect("TODO: Handle error"),
         );
 
-        let renderer = Self {
+        let mut renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
             limits,
@@ -199,17 +229,26 @@ impl VulkanRenderer {
             command_pool,
             command_buffers,
             executing: VecDeque::with_capacity(command_buffer_allocate_info.command_buffer_count as usize),
+            images_pending_destruction: Vec::new(),
+            staging_buffers: VecDeque::with_capacity(2),
             instance: instance_.clone(),
             physical_device,
             device: Arc::new(device),
         };
+
+        // Allocate the staging buffers
+        let staging_buffers = [
+            renderer.allocate_staging_buffer(Self::STAGING_BUFFER_SIZE)?,
+            renderer.allocate_staging_buffer(Self::STAGING_BUFFER_SIZE)?,
+        ];
+        renderer.staging_buffers.extend(staging_buffers);
 
         Ok(renderer)
     }
 
     pub fn submit_staging_buffers(&mut self) -> Result<(), VulkanError> {
         // TODO: Return a syncobj
-        let Some(Staging { command_buffer, uploads }) = self.staging.take() else {
+        let Some(Staging { command_buffer, uploads, upload_buffer, upload_overflow }) = self.staging.take() else {
             // Nothing to submit
             return Ok(());
         };
@@ -222,19 +261,20 @@ impl VulkanRenderer {
             .build();
 
         // FIXME: What if submitting fails? How are we supposed to respond
-        let executing = Executing {
-            command_buffer,
-            uploads,
-            refcounts_dropped: false,
-        };
-
         unsafe {
             self.device
                 .queue_submit(self.queue, array::from_ref(&submit_info), vk::Fence::null())
                 .expect("Handle error");
         }
 
-        self.executing.push_back(executing);
+        let submission = Submission {
+            command_buffer,
+            uploads,
+            upload_buffer,
+            upload_overflow,
+        };
+
+        self.executing.push_back(submission);
 
         Ok(())
     }
@@ -324,7 +364,6 @@ impl ImportMem for VulkanRenderer {
         // buffer has been allocated, mapped, command was recorded.
 
         // TODO: Suballocate a buffer for upload (CpuToGpu).
-        // TODO: Start recording if not already done.
         // TODO: Record copy command with image as target.
 
         let image_refcount = image.refcount.clone();
@@ -332,11 +371,7 @@ impl ImportMem for VulkanRenderer {
 
         self.staging.as_mut().unwrap().uploads.push(Upload {
             image_refcount,
-            id: image.id,
-            // TODO
-            cpu: vk::Buffer::null(),
-            // TODO
-            gpu: vk::Buffer::null(),
+            image_id: image.id,
         });
 
         Ok(())
@@ -490,17 +525,27 @@ impl<'frame> Frame for VulkanFrame<'frame> {
 
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
-        // TODO: This could be better.
+        // FIXME: This should not wait for the device to become idle and instead wait for commands to finish
+        // execution. This is because the host if run as guest renderer may never never let the device become
+        // idle.
         let _ = unsafe { self.device.device_wait_idle() };
 
         // TODO: Move this to a common function.
-        for mut executed in self.executing.drain(..) {
-            // SAFETY: We just waited for the device to become idle.
-            unsafe { executed.refcounts_dropped() };
+        for submission in self.executing.drain(..).collect::<Vec<_>>() {
+            // SAFETY: The commands have finished executing because we just waited for the device to become
+            // idle.
+            let _ = unsafe { self.cleanup_submission(submission) };
         }
 
-        // SAFETY: The render is being dropped, meaning `true` is allowed.
-        unsafe { self.cleanup_images(true) };
+        // Queue all images for destruction.
+        self.images_pending_destruction.extend(self.images.keys());
+        // SAFETY: TODO
+        let _ = unsafe { self.destroy_images() };
+
+        for staging_buffer in self.staging_buffers.drain(..).collect::<Vec<_>>() {
+            // SAFETY: TODO
+            let _ = unsafe { self.destroy_staging_buffer(staging_buffer) };
+        }
 
         // SAFETY:
         // The allocator needs to be dropped before the device is destroyed
@@ -520,6 +565,75 @@ impl Drop for VulkanRenderer {
     }
 }
 
+impl VulkanRenderer {
+    /// The default size for a staging buffer in bytes.
+    ///
+    /// This size was chosen to allow a 1024 x 1024 image in a 32-bit color format to be uploaded before any
+    /// overflow buffers are used. Assuming damage tracking is being used this is plenty of room for all the
+    /// damage boxes from several memory allocated images to be uploaded without any overflow.
+    const STAGING_BUFFER_SIZE: vk::DeviceSize = 1024 * 1024 * 4;
+
+    /// # Safety
+    ///
+    /// - The command buffer must have finished execution.
+    unsafe fn cleanup_submission(&mut self, mut submission: Submission) -> Result<(), VulkanError> {
+        // Reset the command buffer in case of reuse.
+        unsafe {
+            self.device
+                .reset_command_buffer(submission.command_buffer, vk::CommandBufferResetFlags::empty())
+                .expect("Handle error")
+        }
+
+        for upload in submission.uploads.drain(..) {
+            // Decrement the image refcount to allow future cleanup of image resources.
+            let refcount = upload.image_refcount.fetch_sub(1, Ordering::AcqRel);
+
+            // The image is no longer being used, queue the image for destruction.
+            if refcount == 0 {
+                self.images_pending_destruction.push(upload.image_id);
+            }
+        }
+
+        // Free any overflow buffers
+        for overflow in submission.upload_overflow {
+            // TODO: Safety
+            unsafe { self.destroy_staging_buffer(overflow) }?;
+        }
+
+        // Since the buffer is done being used, reset the remaining size
+        submission.upload_buffer.remaining_space = submission.upload_buffer.size;
+
+        // Return the command buffer and upload buffer to the queue
+        self.staging_buffers.push_back(submission.upload_buffer);
+        self.command_buffers.push_back(submission.command_buffer);
+
+        Ok(())
+    }
+
+    unsafe fn destroy_images(&mut self) -> Result<(), VulkanError> {
+        for image_id in self.images_pending_destruction.drain(..) {
+            if let Some(mut info) = self.images.remove(&image_id) {
+                // TODO: For guest image check if the renderer owns the image.
+                // TODO: VUID-vkDestroyImage-image-01000 - If destroy is `true`, the currently executing command must finish
+                // VUID-vkDestroyImage-image-04882: Not a swapchain image
+                unsafe {
+                    self.device.destroy_image(info.image, None);
+                }
+
+                if let Some(allocation) = info.underlying_memory.take() {
+                    match allocation {
+                        ImageAllocationType::Allocator(allocation) => {
+                            self.allocator.free(allocation).expect("Handle error");
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Internal limits used by the renderer
 ///
 /// This is used instead of keeping a copy of [`vk::PhysicalDeviceLimits`] in the renderer because
@@ -530,6 +644,8 @@ struct Limits {
     max_framebuffer_width: u32,
     /// [`vk::PhysicalDeviceLimits::max_framebuffer_height`]
     max_framebuffer_height: u32,
+    /// [`vk::PhysicalDeviceMaintenance4Properties::max_buffer_size`]
+    max_buffer_size: vk::DeviceSize,
 }
 
 /// The type of allocation an image is backed by.
@@ -583,13 +699,27 @@ struct Upload {
     image_refcount: Arc<AtomicUsize>,
 
     /// The image id of the image being uploaded.
-    id: u64,
+    image_id: u64,
+}
 
+#[derive(Debug)]
+struct StagingBuffer {
     /// The CPU side buffer.
     cpu: vk::Buffer,
 
+    /// The CPU side buffer allocation.
+    cpu_allocation: Allocation,
+
     /// The GPU side buffer.
     gpu: vk::Buffer,
+
+    /// The GPU side buffer allocation.
+    gpu_allocation: Allocation,
+
+    size: vk::DeviceSize,
+
+    /// Space remaining in the allocation.
+    remaining_space: vk::DeviceSize,
 }
 
 #[derive(Debug)]
@@ -599,43 +729,30 @@ struct Staging {
 
     /// Pending upload commands.
     uploads: Vec<Upload>,
-    // TODO: Download commands
+
+    /// The CPU side upload staging buffer.
+    upload_buffer: StagingBuffer,
+
+    /// Overflow staging buffers for upload.
+    ///
+    /// Overflow buffers are created when a memory upload exceeds the size of the staging buffer or enough
+    /// data has been uploaded to overflow the capacity of the primary staging buffer.
+    upload_overflow: Vec<StagingBuffer>,
+    // TODO: Download related stuff
 }
 
 /// Information about executing commands.
 ///
 /// This type notably keeps objects alive that cannot be destroyed until command execution has finished.
 #[derive(Debug)]
-struct Executing {
+struct Submission {
     // TODO: A way to check if the command is executed (fence or timeline semaphore)
     command_buffer: vk::CommandBuffer,
 
     /// Upload commands that are executing.
     uploads: Vec<Upload>,
 
-    /// Whether the object reference counts were dropped.
-    ///
-    /// This is only used for debugging purposes.
-    refcounts_dropped: bool,
-}
+    upload_buffer: StagingBuffer,
 
-impl Executing {
-    /// Mark the refcounts used to keep Vulkan objects alive as dropped.
-    ///
-    /// # Safety
-    ///
-    /// - The command buffer must not be executing.
-    /// - This should only be called once.
-    unsafe fn refcounts_dropped(&mut self) {
-        self.refcounts_dropped = true;
-    }
-}
-
-impl Drop for Executing {
-    fn drop(&mut self) {
-        debug_assert!(
-            self.refcounts_dropped,
-            "Executing command info was dropped before refcounts were released"
-        );
-    }
+    upload_overflow: Vec<StagingBuffer>,
 }

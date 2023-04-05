@@ -1,9 +1,6 @@
 use std::{
     ffi::CString,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use ash::vk::{self, Handle};
@@ -239,51 +236,5 @@ impl VulkanRenderer {
         };
 
         Ok(image)
-    }
-
-    /// Performs cleanup on image resources.
-    ///
-    /// # Safety
-    ///
-    /// If `destroy` is [`true`] then the renderer must getting dropped.
-    pub(super) unsafe fn cleanup_images(&mut self, destroy: bool) {
-        // TODO: Use HashMap::drain_filter when stabilized
-        let keys = self
-            .images
-            .iter()
-            .filter(|(_, info)| {
-                // Handle destroy for drop
-                let mut destroy = destroy;
-
-                // If the refcount of the image has reached 0 then all image handles have been dropped and
-                // the image is not being used in any commands.
-                destroy |= info.refcount.load(Ordering::Acquire) > 0;
-                destroy
-            })
-            .map(|(key, _)| key)
-            .copied()
-            .collect::<Vec<_>>();
-
-        for key in keys {
-            if let Some(image_data) = self.images.remove(&key) {
-                // TODO: For guest image check if the renderer owns the image.
-                unsafe {
-                    // TODO: VUID-vkDestroyImage-image-01000 - If destroy is `true`, the currently executing command must finish
-                    // VUID-vkDestroyImage-image-04882: Not a swapchain image
-                    self.device.destroy_image(image_data.image, None);
-                }
-
-                // If the image owns it's memory, free the memory as well
-                if let Some(allocation) = image_data.underlying_memory {
-                    match allocation {
-                        ImageAllocationType::Allocator(allocation) => {
-                            self.allocator
-                                .free(allocation)
-                                .expect("Error while freeing image allocation");
-                        }
-                    }
-                }
-            }
-        }
     }
 }
