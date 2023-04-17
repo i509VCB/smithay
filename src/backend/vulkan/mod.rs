@@ -580,40 +580,37 @@ impl PhysicalDevice {
         let mut supported = vec![];
 
         for format in formats {
-            let vk_format = get_vk_format(format);
+            if let Some(vk_format) = get_vk_format(format) {
+                let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+                    .usage(
+                        vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::TRANSFER_DST
+                            | vk::ImageUsageFlags::SAMPLED,
+                    )
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .format(vk_format)
+                    .ty(vk::ImageType::TYPE_2D);
 
-            if vk_format.is_none() {
-                continue;
-            }
+                let mut image_format_prop = vk::ImageFormatProperties2::default();
+                let res = unsafe {
+                    instance.get_physical_device_image_format_properties2(
+                        self.handle(),
+                        &format_info,
+                        &mut image_format_prop,
+                    )
+                };
 
-            let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
-                .usage(
-                    vk::ImageUsageFlags::TRANSFER_SRC
-                        | vk::ImageUsageFlags::TRANSFER_DST
-                        | vk::ImageUsageFlags::SAMPLED,
-                )
-                .format(vk_format.expect("vk_format to exist"))
-                .ty(vk::ImageType::TYPE_2D);
-
-            let mut image_format_prop = vk::ImageFormatProperties2::default();
-            let res = unsafe {
-                instance.get_physical_device_image_format_properties2(
-                    self.handle(),
-                    &format_info,
-                    &mut image_format_prop,
-                )
-            };
-
-            match res {
-                Ok(_) => {
+                if let Ok(_) = res {
                     if image_format_prop.image_format_properties.max_extent.depth == 1 {
-                        supported.push(vk_format.expect("vk_format to exist"));
+                        supported.push(vk_format);
                     };
                 }
-                Err(_) => {}
-            };
+            }
         }
 
+        // Most DrmFourcc formats have an opaque and alpha variant. Vulkan does not have alpha and
+        // opaque variants of formats, instead represents opaque formats by swizzling the alpha
+        // channel.
         supported.dedup();
         supported
     }
