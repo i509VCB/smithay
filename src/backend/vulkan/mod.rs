@@ -532,7 +532,7 @@ impl PhysicalDevice {
         unsafe { instance.get_physical_device_properties2(self.handle(), props) }
     }
 
-        /// Get a list of supported formats.
+    /// Get a list of supported formats.
     ///
     /// Checks a list of formats (currently hardcoded to be Argb8888 and Argb2101010 from DrmFourcc) to see if they are compatible with
     /// the current device.
