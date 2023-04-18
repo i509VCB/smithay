@@ -24,7 +24,7 @@ mod staging;
 
 use std::{
     array,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     mem::ManuallyDrop,
     sync::{
@@ -42,7 +42,7 @@ use gpu_allocator::{
 
 use crate::{
     backend::{
-        allocator::format,
+        allocator::{format, vulkan::format::get_vk_format},
         vulkan::{Instance, PhysicalDevice, LIBRARY},
     },
     utils::{Buffer, Physical, Rectangle, Size, Transform},
@@ -93,6 +93,9 @@ pub struct VulkanRenderer {
 
     // The device is placed in an Arc since it quite large.
     device: Arc<ash::Device>,
+
+    // A [`HashSet`] containing supported [`vk::Format`].
+    supported_formats: HashSet<vk::Format>,
 }
 
 impl fmt::Debug for VulkanRenderer {
@@ -111,6 +114,19 @@ impl fmt::Debug for VulkanRenderer {
             .field("device", &self.device.handle())
             .finish()
     }
+}
+
+fn format_list() -> Vec<DrmFourcc> {
+    vec![
+        DrmFourcc::Argb8888,
+        DrmFourcc::Bgra8888,
+        DrmFourcc::Rgba8888,
+        DrmFourcc::Xbgr8888,
+        DrmFourcc::Argb2101010,
+        DrmFourcc::Bgra1010102,
+        DrmFourcc::Rgba1010102,
+        DrmFourcc::Xrgb2101010,
+    ]
 }
 
 impl VulkanRenderer {
@@ -218,6 +234,37 @@ impl VulkanRenderer {
                 .expect("TODO: Handle error"),
         );
 
+        let mut supported_formats = HashSet::new();
+
+        for format in format_list() {
+            if let Some(vk_format) = get_vk_format(format) {
+                let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+                    .usage(
+                        vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::TRANSFER_DST
+                            | vk::ImageUsageFlags::SAMPLED,
+                    )
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .format(vk_format)
+                    .ty(vk::ImageType::TYPE_2D);
+
+                let mut image_format_prop = vk::ImageFormatProperties2::default();
+                let res = unsafe {
+                    instance.get_physical_device_image_format_properties2(
+                        physical_device,
+                        &format_info,
+                        &mut image_format_prop,
+                    )
+                };
+
+                if let Ok(_) = res {
+                    if image_format_prop.image_format_properties.max_extent.depth == 1 {
+                        supported_formats.insert(vk_format);
+                    };
+                }
+            }
+        }
+
         let mut renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
@@ -234,6 +281,7 @@ impl VulkanRenderer {
             instance: instance_.clone(),
             physical_device,
             device: Arc::new(device),
+            supported_formats,
         };
 
         // Allocate the staging buffers
