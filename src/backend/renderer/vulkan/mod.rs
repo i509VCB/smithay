@@ -116,18 +116,16 @@ impl fmt::Debug for VulkanRenderer {
     }
 }
 
-fn format_list() -> Vec<DrmFourcc> {
-    vec![
-        DrmFourcc::Argb8888,
-        DrmFourcc::Bgra8888,
-        DrmFourcc::Rgba8888,
-        DrmFourcc::Xbgr8888,
-        DrmFourcc::Argb2101010,
-        DrmFourcc::Bgra1010102,
-        DrmFourcc::Rgba1010102,
-        DrmFourcc::Xrgb2101010,
-    ]
-}
+const MEM_FORMATS: &[DrmFourcc] = &[
+    DrmFourcc::Argb8888,
+    DrmFourcc::Bgra8888,
+    DrmFourcc::Rgba8888,
+    DrmFourcc::Xbgr8888,
+    DrmFourcc::Argb2101010,
+    DrmFourcc::Bgra1010102,
+    DrmFourcc::Rgba1010102,
+    DrmFourcc::Xrgb2101010,
+];
 
 impl VulkanRenderer {
     pub fn new(device: &PhysicalDevice) -> Result<Self, VulkanError> {
@@ -236,8 +234,8 @@ impl VulkanRenderer {
 
         let mut supported_formats = HashSet::new();
 
-        for format in format_list() {
-            if let Some(vk_format) = get_vk_format(format) {
+        for format in MEM_FORMATS {
+            if let Some(vk_format) = get_vk_format(*format) {
                 let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
                     .usage(
                         vk::ImageUsageFlags::TRANSFER_SRC
@@ -257,7 +255,7 @@ impl VulkanRenderer {
                     )
                 };
 
-                if let Ok(_) = res {
+                if res.is_ok() {
                     if image_format_prop.image_format_properties.max_extent.depth == 1 {
                         supported_formats.insert(vk_format);
                     };

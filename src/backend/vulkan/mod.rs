@@ -77,7 +77,6 @@ use ash::{
     vk::{self, PhysicalDeviceDriverProperties, PhysicalDeviceDrmPropertiesEXT},
     Entry,
 };
-use drm_fourcc::DrmFourcc;
 use libc::c_void;
 use once_cell::sync::Lazy;
 use scopeguard::ScopeGuard;
@@ -87,7 +86,6 @@ use crate::backend::vulkan::inner::DebugState;
 
 use self::{inner::InstanceInner, version::Version};
 
-use super::allocator::vulkan::format::get_vk_format;
 #[cfg(feature = "backend_drm")]
 use super::drm::DrmNode;
 
