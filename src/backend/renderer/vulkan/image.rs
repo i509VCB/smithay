@@ -71,6 +71,17 @@ impl VulkanRenderer {
 
         let vk_format = vulkan::format::get_vk_format(format).expect("Already validated");
 
+        // Check if the format is supported
+        let format_info = self
+            .mem_formats
+            .get(&vk_format)
+            .expect("TODO: VulkanError variant");
+
+        // The image is too big to create.
+        if format_info.max_extent.width < size.w as u32 || format_info.max_extent.height < size.h as u32 {
+            todo!()
+        }
+
         let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
             .format(vk_format)
             .tiling(vk::ImageTiling::OPTIMAL)
@@ -91,6 +102,7 @@ impl VulkanRenderer {
                 .expect("Handle error")
         };
 
+        // This second check on the max_extent takes into account the image creation limits.
         let max_extent = properties.image_format_properties.max_extent;
 
         // VUID-VkImageCreateInfo-extent-02252
