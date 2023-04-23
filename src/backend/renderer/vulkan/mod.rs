@@ -255,11 +255,22 @@ impl VulkanRenderer {
                     )
                 };
 
-                if res.is_ok() {
-                    if image_format_prop.image_format_properties.max_extent.depth == 1 {
-                        supported_formats.insert(vk_format);
-                    };
+                // If the format is not supported move on.
+                //
+                // It would seem intuitive to also to test for ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR but that is
+                // gated by VK_KHR_video_queue which smithay does not use any usage flags from.
+                if matches!(res, Err(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)) {
+                    continue;
                 }
+
+                res.expect("TODO: From<vk::Result> for VulkanError");
+
+                if image_format_prop.image_format_properties.max_extent.depth != 1 {
+                    // Broken driver?
+                    continue;
+                }
+
+                supported_formats.insert(vk_format);
             }
         }
 
