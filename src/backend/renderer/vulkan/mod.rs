@@ -429,7 +429,7 @@ impl ImportMem for VulkanRenderer {
                     .level_count(1)
                     .layer_count(1)
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .build()
+                    .build(),
             )
             .build();
 
@@ -441,11 +441,16 @@ impl ImportMem for VulkanRenderer {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                &[barrier]
+                &[barrier],
             );
         }
 
         // TODO: Copy cpu side data to the CPU buffer
+        let mapped = buffer.cpu_allocation.mapped_slice_mut().unwrap();
+        mapped
+            .get_mut(src_offset as usize..(src_offset as usize + data.len()))
+            .unwrap()
+            .copy_from_slice(data);
 
         // Record the CPU -> GPU buffer transfer
         unsafe {

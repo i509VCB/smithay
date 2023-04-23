@@ -18,7 +18,7 @@ fn main() {
 
     let _image = renderer
         .import_memory(
-            &[0x00, 0x00, 0x00, 0x00],
+            &[0xFF, 0xFF, 0xFF, 0xFF],
             drm_fourcc::DrmFourcc::Argb8888,
             (1, 1).into(),
             false,
