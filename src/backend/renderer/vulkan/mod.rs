@@ -94,7 +94,10 @@ pub struct VulkanRenderer {
     // The device is placed in an Arc since it quite large.
     device: Arc<ash::Device>,
 
-    // A [`HashSet`] containing supported [`vk::Format`].
+    /// The fourcc format codes that can be used with ImportMem. This is a separate list from the Vulkan
+    /// format list since Smithay's APIs use fourcc format codes.
+    fourcc_mem_formats: HashSet<DrmFourcc>,
+
     mem_formats: HashMap<vk::Format, MemImageLimits>,
 }
 
@@ -248,6 +251,7 @@ impl VulkanRenderer {
             instance: instance_.clone(),
             physical_device,
             device: Arc::new(device),
+            fourcc_mem_formats: HashSet::new(),
             mem_formats: HashMap::new(),
         };
 
@@ -396,7 +400,7 @@ impl ImportMem for VulkanRenderer {
     }
 
     fn mem_formats(&self) -> Box<dyn Iterator<Item = DrmFourcc>> {
-        todo!()
+        Box::new(self.fourcc_mem_formats.clone().into_iter())
     }
 }
 
@@ -696,6 +700,7 @@ impl VulkanRenderer {
                     continue;
                 }
 
+                self.fourcc_mem_formats.insert(*format);
                 self.mem_formats.insert(
                     vk_format,
                     MemImageLimits {

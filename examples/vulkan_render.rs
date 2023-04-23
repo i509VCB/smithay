@@ -14,6 +14,8 @@ fn main() {
     let device = PhysicalDevice::enumerate(&instance).unwrap().next().unwrap();
     let mut renderer = VulkanRenderer::new(&device).unwrap();
 
+    dbg!(renderer.mem_formats().collect::<Vec<_>>());
+
     let _image = renderer
         .import_memory(
             &[0x00, 0x00, 0x00, 0x00],
