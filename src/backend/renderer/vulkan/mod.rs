@@ -721,7 +721,6 @@ struct ImageInfo {
     /// The underlying memory of the image.
     ///
     /// This will be [`None`] if the renderer does not own the image.
-    // TODO: This may be multiple instances of device memory for imported textures.
     underlying_memory: Option<ImageAllocationType>,
 }
 
@@ -762,6 +761,7 @@ struct StagingBuffer {
     /// The GPU side buffer allocation.
     gpu_allocation: Allocation,
 
+    /// The size of both buffers.
     size: vk::DeviceSize,
 
     /// Space remaining in the allocation.
@@ -798,7 +798,9 @@ struct Submission {
     /// Upload commands that are executing.
     uploads: Vec<Upload>,
 
+    /// The staging buffer in use.
     upload_buffer: StagingBuffer,
 
+    /// Overflow staging buffers in use.
     upload_overflow: Vec<StagingBuffer>,
 }
