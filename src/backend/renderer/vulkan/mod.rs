@@ -232,7 +232,7 @@ impl VulkanRenderer {
                 .expect("TODO: Handle error"),
         );
 
-        let mut supported_formats = HashSet::new();
+        let supported_formats = HashSet::new();
 
         let mut renderer = Self {
             images: HashMap::new(),
@@ -656,9 +656,15 @@ impl VulkanRenderer {
     fn init_mem_formats(&mut self) -> Result<(), VulkanError> {
         for format in MEM_FORMATS {
             if let Some(vk_format) = get_vk_format(*format) {
+                // The actual process of uploading the texture contents to the GPU uses vkCmdCopyBufferToImage.
+                // This means that all valid usage requirements for vkCmdCopyBufferToImage apply to testing what
+                // formats are supported.
+
                 let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
                     .usage(
+                        // TRANSFER_SRC isn't technically required but makes ExportMem easy to support.
                         vk::ImageUsageFlags::TRANSFER_SRC
+                            // VUID-vkCmdCopyBufferToImage-dstImage-01997
                             | vk::ImageUsageFlags::TRANSFER_DST
                             | vk::ImageUsageFlags::SAMPLED,
                     )
