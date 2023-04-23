@@ -138,9 +138,6 @@ const MEM_FORMATS: &[DrmFourcc] = &[
 
 impl VulkanRenderer {
     pub fn new(device: &PhysicalDevice) -> Result<Self, VulkanError> {
-        // Check if the required extensions are available
-        //
-        // TODO: Is this too restrictive?
         // The Vulkan specification says the following in the specification about VkMemoryDedicatedRequirements:
         // > requiresDedicatedAllocation may be VK_TRUE if the image’s tiling is VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT.
         //
@@ -149,7 +146,9 @@ impl VulkanRenderer {
         // then there would need to be addition tests on formats and modifiers to determine if the ImportDma
         // implementation is even worth advertising support for.
         //
-        // For reference wlroots always requires VK_KHR_dedicated_allocation for dmabuf import.
+        // However this extension is so widespread on Linux (91.47% at the time of writing) and the last
+        // unsupported reports are from 2017 so it is pretty clear this extension can be required. Also that
+        // extension is mandated to be a part of Vulkan 1.1.
         if !device.has_device_extension(vk::KhrDedicatedAllocationFn::name()) {
             todo!("Missing extensions")
         }
