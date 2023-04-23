@@ -234,46 +234,6 @@ impl VulkanRenderer {
 
         let mut supported_formats = HashSet::new();
 
-        for format in MEM_FORMATS {
-            if let Some(vk_format) = get_vk_format(*format) {
-                let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
-                    .usage(
-                        vk::ImageUsageFlags::TRANSFER_SRC
-                            | vk::ImageUsageFlags::TRANSFER_DST
-                            | vk::ImageUsageFlags::SAMPLED,
-                    )
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .format(vk_format)
-                    .ty(vk::ImageType::TYPE_2D);
-
-                let mut image_format_prop = vk::ImageFormatProperties2::default();
-                let res = unsafe {
-                    instance.get_physical_device_image_format_properties2(
-                        physical_device,
-                        &format_info,
-                        &mut image_format_prop,
-                    )
-                };
-
-                // If the format is not supported move on.
-                //
-                // It would seem intuitive to also to test for ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR but that is
-                // gated by VK_KHR_video_queue which smithay does not use any usage flags from.
-                if matches!(res, Err(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)) {
-                    continue;
-                }
-
-                res.expect("TODO: From<vk::Result> for VulkanError");
-
-                if image_format_prop.image_format_properties.max_extent.depth != 1 {
-                    // Broken driver?
-                    continue;
-                }
-
-                supported_formats.insert(vk_format);
-            }
-        }
-
         let mut renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
@@ -292,6 +252,9 @@ impl VulkanRenderer {
             device: Arc::new(device),
             supported_formats,
         };
+
+        // Determine supported ImportMem formats.
+        renderer.init_mem_formats()?;
 
         // Allocate the staging buffers
         let staging_buffers = [
@@ -684,6 +647,52 @@ impl VulkanRenderer {
                         }
                     }
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn init_mem_formats(&mut self) -> Result<(), VulkanError> {
+        for format in MEM_FORMATS {
+            if let Some(vk_format) = get_vk_format(*format) {
+                let format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+                    .usage(
+                        vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::TRANSFER_DST
+                            | vk::ImageUsageFlags::SAMPLED,
+                    )
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .format(vk_format)
+                    .ty(vk::ImageType::TYPE_2D);
+
+                let mut image_format_prop = vk::ImageFormatProperties2::default();
+                let res = unsafe {
+                    self.instance
+                        .handle()
+                        .get_physical_device_image_format_properties2(
+                            self.physical_device,
+                            &format_info,
+                            &mut image_format_prop,
+                        )
+                };
+
+                // If the format is not supported move on.
+                //
+                // It would seem intuitive to also to test for ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR but that is
+                // gated by VK_KHR_video_queue which smithay does not use any usage flags from.
+                if matches!(res, Err(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)) {
+                    continue;
+                }
+
+                res.expect("TODO: From<vk::Result> for VulkanError");
+
+                if image_format_prop.image_format_properties.max_extent.depth != 1 {
+                    // Broken driver?
+                    continue;
+                }
+
+                self.supported_formats.insert(vk_format);
             }
         }
 
