@@ -121,13 +121,19 @@ impl fmt::Debug for VulkanRenderer {
 
 const MEM_FORMATS: &[DrmFourcc] = &[
     DrmFourcc::Argb8888,
+    DrmFourcc::Xrgb8888,
     DrmFourcc::Bgra8888,
+    DrmFourcc::Bgrx8888,
     DrmFourcc::Rgba8888,
+    DrmFourcc::Rgbx8888,
+    DrmFourcc::Abgr8888,
     DrmFourcc::Xbgr8888,
     DrmFourcc::Argb2101010,
-    DrmFourcc::Bgra1010102,
-    DrmFourcc::Rgba1010102,
     DrmFourcc::Xrgb2101010,
+    DrmFourcc::Bgra1010102,
+    DrmFourcc::Bgrx1010102,
+    DrmFourcc::Rgba1010102,
+    DrmFourcc::Rgbx1010102,
 ];
 
 impl VulkanRenderer {
