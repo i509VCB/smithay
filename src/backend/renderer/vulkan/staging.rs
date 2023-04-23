@@ -85,6 +85,12 @@ impl VulkanRenderer {
             })
             .expect("Handle error");
 
+        unsafe {
+            self.device
+                .bind_buffer_memory(cpu, cpu_allocation.memory(), cpu_allocation.offset())
+        }
+        .expect("Handle error");
+
         let gpu_buffer_create_info = vk::BufferCreateInfo::builder()
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             // The buffer must be a valid source and destination for copy commands because the buffer is copied
@@ -106,6 +112,12 @@ impl VulkanRenderer {
                 allocation_scheme: AllocationScheme::GpuAllocatorManaged,
             })
             .expect("Handle error");
+
+        unsafe {
+            self.device
+                .bind_buffer_memory(gpu, gpu_allocation.memory(), gpu_allocation.offset())
+        }
+        .expect("Handle error");
 
         // Set the object names if supported
         if let Some(debug_utils) = self.debug_utils.as_ref() {
