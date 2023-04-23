@@ -413,7 +413,37 @@ impl ImportMem for VulkanRenderer {
             (staging.command_buffer, buffer, offset, offset)
         };
 
-        let image = self.images.get(&texture.id).expect("Not possible");
+        let image = self.images.get_mut(&texture.id).expect("Not possible");
+
+        let old_layout = image.layout;
+        image.layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+
+        // Record a barrier to ensure the image layout is suitable for transfer.
+        let barrier = vk::ImageMemoryBarrier::builder()
+            .image(image.image)
+            .old_layout(old_layout)
+            .new_layout(image.layout)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .base_array_layer(0)
+                    .level_count(1)
+                    .layer_count(1)
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .build()
+            )
+            .build();
+
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier]
+            );
+        }
 
         // TODO: Copy cpu side data to the CPU buffer
 
@@ -437,7 +467,8 @@ impl ImportMem for VulkanRenderer {
             .image_offset(vk::Offset3D {
                 x: region.loc.x,
                 y: region.loc.y,
-                z: 1,
+                // VUID-vkCmdCopyBufferToImage-srcImage-00201
+                z: 0,
             })
             .image_subresource(
                 vk::ImageSubresourceLayers::builder()
@@ -845,6 +876,8 @@ struct ImageInfo {
     ///
     /// This will be [`None`] if the renderer does not own the image.
     underlying_memory: Option<ImageAllocationType>,
+
+    layout: vk::ImageLayout,
 }
 
 impl fmt::Debug for ImageInfo {

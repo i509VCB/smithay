@@ -236,6 +236,7 @@ impl VulkanRenderer {
             // Image creation was successful, disarm the scope guards.
             image: ScopeGuard::into_inner(image),
             underlying_memory: Some(ImageAllocationType::Allocator(ScopeGuard::into_inner(allocation))),
+            layout: vk::ImageLayout::UNDEFINED,
         });
 
         let image = VulkanImage {
