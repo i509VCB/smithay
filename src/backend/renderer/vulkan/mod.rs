@@ -415,6 +415,8 @@ impl ImportMem for VulkanRenderer {
 
         let image = self.images.get(&texture.id).expect("Not possible");
 
+        // TODO: Copy cpu side data to the CPU buffer
+
         // Record the CPU -> GPU buffer transfer
         unsafe {
             self.device.cmd_copy_buffer(
