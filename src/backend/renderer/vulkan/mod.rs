@@ -380,19 +380,89 @@ impl ImportMem for VulkanRenderer {
         let bpp = format::get_bpp(fourcc).expect("Handle unknown format");
         // In theory bpp / 8 could be technically wrong if the bpp had with a remainder when divided by 8
         let min_size = (bpp / 8) * texture.width() as usize * texture.height() as usize;
-        let _data = data.get(0..min_size).expect("Handle error: Too small");
+        let data = data.get(0..min_size).expect("Handle error: Too small");
 
         // TODO: Forbid non ImportMem buffers.
         self.init_staging()?;
 
-        let image = self.images.get(&texture.id).expect("Not possible");
-
         // Initializing the staging buffers can fail, defer incrementing the refcount until after the staging
         // buffer has been allocated, mapped, command was recorded.
 
-        // TODO: Suballocate a buffer for upload (CpuToGpu).
-        // TODO: Record copy command with image as target.
+        let staging = self.staging.as_ref().unwrap();
+        let remaining_space = staging.upload_buffer.remaining_space;
 
+        let (command_buffer, buffer, src_offset, dst_offset) = if remaining_space < min_size as vk::DeviceSize
+        {
+            // Allocate an overflow buffer if the staging buffer can't fit what is being uploaded.
+            let buffer = self.allocate_staging_buffer(min_size as vk::DeviceSize)?;
+            let staging = self.staging.as_mut().unwrap();
+
+            staging.upload_overflow.push(buffer);
+            let buffer = staging.upload_overflow.last_mut().unwrap();
+            buffer.remaining_space = 0;
+
+            // Since only this update will use the buffer, offsets of 0 are allowed.
+            (staging.command_buffer, buffer, 0, 0)
+        } else {
+            let staging = self.staging.as_mut().unwrap();
+            let buffer = &mut staging.upload_buffer;
+            buffer.remaining_space -= min_size as vk::DeviceSize;
+
+            let offset = buffer.size - buffer.remaining_space;
+
+            (staging.command_buffer, buffer, offset, offset)
+        };
+
+        let image = self.images.get(&texture.id).expect("Not possible");
+
+        // Record the CPU -> GPU buffer transfer
+        unsafe {
+            self.device.cmd_copy_buffer(
+                command_buffer,
+                buffer.cpu,
+                buffer.gpu,
+                &[vk::BufferCopy::builder()
+                    .src_offset(src_offset)
+                    .dst_offset(dst_offset)
+                    .size(data.len() as vk::DeviceSize)
+                    .build()],
+            )
+        };
+
+        // Record the GPU Buffer -> image transfer
+        let copy = vk::BufferImageCopy::builder()
+            .buffer_offset(dst_offset)
+            .image_offset(vk::Offset3D {
+                x: region.loc.x,
+                y: region.loc.y,
+                z: 1,
+            })
+            .image_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1)
+                    .build(),
+            )
+            .image_extent(vk::Extent3D {
+                width: region.size.w as u32,
+                height: region.size.h as u32,
+                depth: 1,
+            })
+            .build();
+
+        unsafe {
+            self.device.cmd_copy_buffer_to_image(
+                command_buffer,
+                buffer.gpu,
+                image.image,
+                // Tell the driver we would like the copy to occur when most convenient.
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[copy],
+            );
+        }
+
+        // Now that the command has been recorded, increment the image refcount to ensure the image is alive
+        // while commands are executing.
         let image_refcount = image.refcount.clone();
         image_refcount.fetch_add(1, Ordering::Acquire);
 
