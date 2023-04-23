@@ -87,8 +87,9 @@ impl VulkanRenderer {
 
         let gpu_buffer_create_info = vk::BufferCreateInfo::builder()
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            // The buffer is going to be used to copy to an image so it should be a valid source for transfer.
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            // The buffer must be a valid source and destination for copy commands because the buffer is copied
+            // to by the CPU and copied from on the GPU.
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST)
             .size(size);
         let gpu = unsafe { self.device.create_buffer(&gpu_buffer_create_info, None) }.unwrap();
         let requirements = unsafe { self.device.get_buffer_memory_requirements(gpu) };
