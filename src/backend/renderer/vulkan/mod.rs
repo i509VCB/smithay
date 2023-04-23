@@ -95,7 +95,7 @@ pub struct VulkanRenderer {
     device: Arc<ash::Device>,
 
     // A [`HashSet`] containing supported [`vk::Format`].
-    supported_formats: HashSet<vk::Format>,
+    mem_formats: HashMap<vk::Format, MemImageLimits>,
 }
 
 impl fmt::Debug for VulkanRenderer {
@@ -232,8 +232,6 @@ impl VulkanRenderer {
                 .expect("TODO: Handle error"),
         );
 
-        let supported_formats = HashSet::new();
-
         let mut renderer = Self {
             images: HashMap::new(),
             next_image_id: 0,
@@ -250,7 +248,7 @@ impl VulkanRenderer {
             instance: instance_.clone(),
             physical_device,
             device: Arc::new(device),
-            supported_formats,
+            mem_formats: HashMap::new(),
         };
 
         // Determine supported ImportMem formats.
@@ -698,7 +696,12 @@ impl VulkanRenderer {
                     continue;
                 }
 
-                self.supported_formats.insert(vk_format);
+                self.mem_formats.insert(
+                    vk_format,
+                    MemImageLimits {
+                        max_extent: image_format_prop.image_format_properties.max_extent,
+                    },
+                );
             }
         }
 
@@ -718,6 +721,18 @@ struct Limits {
     max_framebuffer_height: u32,
     /// [`vk::PhysicalDeviceMaintenance4Properties::max_buffer_size`]
     max_buffer_size: vk::DeviceSize,
+}
+
+#[derive(Debug)]
+struct MemImageLimits {
+    /// Maximum image dimensions.
+    ///
+    /// This should be used to quickly check if the image size is allowed. However it is not garunteed an
+    /// image of this size is supported (check the image creation limits).
+    ///
+    /// Technically this value can be greater than the `maxImageDimension2D` device limit per the specification
+    /// https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#features-extentperimagetype
+    max_extent: vk::Extent3D,
 }
 
 /// The type of allocation an image is backed by.
