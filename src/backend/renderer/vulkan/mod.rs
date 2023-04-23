@@ -445,9 +445,10 @@ impl ImportMem for VulkanRenderer {
             );
         }
 
-        // TODO: Copy cpu side data to the CPU buffer
+        // Copy data to the cpu buffer.
         let mapped = buffer.cpu_allocation.mapped_slice_mut().unwrap();
         mapped
+            // Since this could be a suballocated buffer, copy from the offset and offset + len
             .get_mut(src_offset as usize..(src_offset as usize + data.len()))
             .unwrap()
             .copy_from_slice(data);
