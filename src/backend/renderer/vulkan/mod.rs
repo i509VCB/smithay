@@ -380,8 +380,7 @@ impl ImportMem for VulkanRenderer {
         let bpp = format::get_bpp(fourcc).expect("Handle unknown format");
 
         // In theory bpp / 8 could be technically wrong if the bpp had with a remainder when divided by 8
-        let min_size = (bpp / 8) * region.size.w as usize * region.size.h as usize;
-        let data = data.get(0..min_size).expect("Handle error: Too small");
+        let copy_size = (bpp / 8) * region.size.w as usize * region.size.h as usize;
 
         // TODO: Forbid non ImportMem buffers.
         self.init_staging()?;
@@ -392,27 +391,27 @@ impl ImportMem for VulkanRenderer {
         let staging = self.staging.as_ref().unwrap();
         let remaining_space = staging.upload_buffer.remaining_space;
 
-        let (command_buffer, buffer, src_offset, dst_offset) = if remaining_space < min_size as vk::DeviceSize
-        {
-            // Allocate an overflow buffer if the staging buffer can't fit what is being uploaded.
-            let buffer = self.allocate_staging_buffer(min_size as vk::DeviceSize)?;
-            let staging = self.staging.as_mut().unwrap();
+        let (command_buffer, buffer, src_offset, dst_offset) =
+            if remaining_space < copy_size as vk::DeviceSize {
+                // Allocate an overflow buffer if the staging buffer can't fit what is being uploaded.
+                let buffer = self.allocate_staging_buffer(copy_size as vk::DeviceSize)?;
+                let staging = self.staging.as_mut().unwrap();
 
-            staging.upload_overflow.push(buffer);
-            let buffer = staging.upload_overflow.last_mut().unwrap();
-            buffer.remaining_space = 0;
+                staging.upload_overflow.push(buffer);
+                let buffer = staging.upload_overflow.last_mut().unwrap();
+                buffer.remaining_space = 0;
 
-            // Since only this update will use the buffer, offsets of 0 are allowed.
-            (staging.command_buffer, buffer, 0, 0)
-        } else {
-            let staging = self.staging.as_mut().unwrap();
-            let buffer = &mut staging.upload_buffer;
-            buffer.remaining_space -= min_size as vk::DeviceSize;
+                // Since only this update will use the buffer, offsets of 0 are allowed.
+                (staging.command_buffer, buffer, 0, 0)
+            } else {
+                let staging = self.staging.as_mut().unwrap();
+                let buffer = &mut staging.upload_buffer;
+                buffer.remaining_space -= copy_size as vk::DeviceSize;
 
-            let offset = buffer.size - buffer.remaining_space;
+                let offset = buffer.size - buffer.remaining_space;
 
-            (staging.command_buffer, buffer, offset, offset)
-        };
+                (staging.command_buffer, buffer, offset, offset)
+            };
 
         let image = self.images.get_mut(&texture.id).expect("Not possible");
 
@@ -446,15 +445,20 @@ impl ImportMem for VulkanRenderer {
             );
         }
 
-        // Copy data to the cpu buffer.
-        //
-        // FIXME: Copy by row
         let mapped = buffer.cpu_allocation.mapped_slice_mut().unwrap();
-        mapped
-            // Since this could be a suballocated buffer, copy to the offset and offset + len
-            .get_mut(src_offset as usize..(src_offset as usize + data.len()))
-            .unwrap()
-            .copy_from_slice(data);
+
+        // Copy the region into the staging buffer by row since vkCmdCopyBufferToImage will copy row by row.
+        for row in 0..region.size.h as usize {
+            let start = row * ((bpp / 8) * region.loc.x as usize);
+            let end = start + ((bpp / 8) * region.size.w as usize);
+            let data = data.get(start..end).expect("within bounds");
+
+            // Since the buffer may be suballocated, copy from the offset.
+            let start = start + src_offset as usize;
+            let end = end + src_offset as usize;
+            let row = mapped.get_mut(start..end).expect("within bounds");
+            row.copy_from_slice(data);
+        }
 
         // Record the CPU -> GPU buffer transfer
         unsafe {
@@ -465,7 +469,7 @@ impl ImportMem for VulkanRenderer {
                 &[vk::BufferCopy::builder()
                     .src_offset(src_offset)
                     .dst_offset(dst_offset)
-                    .size(data.len() as vk::DeviceSize)
+                    .size(copy_size as vk::DeviceSize)
                     .build()],
             )
         };
