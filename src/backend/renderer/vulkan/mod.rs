@@ -448,16 +448,33 @@ impl ImportMem for VulkanRenderer {
         let mapped = buffer.cpu_allocation.mapped_slice_mut().unwrap();
 
         // Copy the region into the staging buffer by row since vkCmdCopyBufferToImage will copy row by row.
-        for row in 0..region.size.h as usize {
-            let start = row * ((bpp / 8) * region.loc.x as usize);
-            let end = start + ((bpp / 8) * region.size.w as usize);
-            let data = data.get(start..end).expect("within bounds");
+        if image.flipped {
+            for row in (0..region.size.h as usize)
+                // Reverse iterator to effectively flip the copy.
+                .rev()
+            {
+                let start = row * ((bpp / 8) * region.loc.x as usize);
+                let end = start + ((bpp / 8) * region.size.w as usize);
+                let data = data.get(start..end).expect("within bounds");
 
-            // Since the buffer may be suballocated, copy from the offset.
-            let start = start + src_offset as usize;
-            let end = end + src_offset as usize;
-            let row = mapped.get_mut(start..end).expect("within bounds");
-            row.copy_from_slice(data);
+                // Since the buffer may be suballocated, copy from the offset.
+                let start = start + src_offset as usize;
+                let end = end + src_offset as usize;
+                let row = mapped.get_mut(start..end).expect("within bounds");
+                row.copy_from_slice(data);
+            }
+        } else {
+            for row in 0..region.size.h as usize {
+                let start = row * ((bpp / 8) * region.loc.x as usize);
+                let end = start + ((bpp / 8) * region.size.w as usize);
+                let data = data.get(start..end).expect("within bounds");
+
+                // Since the buffer may be suballocated, copy from the offset.
+                let start = start + src_offset as usize;
+                let end = end + src_offset as usize;
+                let row = mapped.get_mut(start..end).expect("within bounds");
+                row.copy_from_slice(data);
+            }
         }
 
         // Record the CPU -> GPU buffer transfer
@@ -881,6 +898,9 @@ struct ImageInfo {
     /// The refcount is increased to ensure the underlying image resource is not freed while VulkanTexture
     /// handles exist or the texture is used in a command buffer.
     refcount: Arc<AtomicUsize>,
+
+    /// Whether the imaqe contents should be flipped on upload.
+    flipped: bool,
 
     /// The underlying image resource.
     image: vk::Image,

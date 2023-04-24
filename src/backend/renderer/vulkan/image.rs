@@ -56,8 +56,7 @@ impl VulkanRenderer {
         &mut self,
         format: DrmFourcc,
         size: Size<i32, Buffer>,
-        // TODO: Use flipped
-        _flipped: bool,
+        flipped: bool,
     ) -> Result<VulkanImage, VulkanError> {
         // TODO: Could loosen the usage requirements if ExportMem could fail to work for some formats
         // When impl const is available in ash, remove the from_raw and as_raw calls.
@@ -233,6 +232,7 @@ impl VulkanRenderer {
             renderer_id: 0, // TODO
             // Initialize with a refcount of 1 since a new image handle is being created.
             refcount: Arc::new(AtomicUsize::new(1)),
+            flipped,
             // Image creation was successful, disarm the scope guards.
             image: ScopeGuard::into_inner(image),
             underlying_memory: Some(ImageAllocationType::Allocator(ScopeGuard::into_inner(allocation))),
