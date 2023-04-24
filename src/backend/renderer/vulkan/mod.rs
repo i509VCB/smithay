@@ -378,8 +378,9 @@ impl ImportMem for VulkanRenderer {
         let _vk_format = texture.vk_format();
 
         let bpp = format::get_bpp(fourcc).expect("Handle unknown format");
+
         // In theory bpp / 8 could be technically wrong if the bpp had with a remainder when divided by 8
-        let min_size = (bpp / 8) * texture.width() as usize * texture.height() as usize;
+        let min_size = (bpp / 8) * region.size.w as usize * region.size.h as usize;
         let data = data.get(0..min_size).expect("Handle error: Too small");
 
         // TODO: Forbid non ImportMem buffers.
@@ -446,9 +447,11 @@ impl ImportMem for VulkanRenderer {
         }
 
         // Copy data to the cpu buffer.
+        //
+        // FIXME: Copy by row
         let mapped = buffer.cpu_allocation.mapped_slice_mut().unwrap();
         mapped
-            // Since this could be a suballocated buffer, copy from the offset and offset + len
+            // Since this could be a suballocated buffer, copy to the offset and offset + len
             .get_mut(src_offset as usize..(src_offset as usize + data.len()))
             .unwrap()
             .copy_from_slice(data);
