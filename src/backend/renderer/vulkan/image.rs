@@ -12,7 +12,10 @@ use gpu_allocator::{
 use scopeguard::ScopeGuard;
 
 use crate::{
-    backend::{allocator::vulkan, renderer::vulkan::ImageInfo},
+    backend::{
+        allocator::vulkan,
+        renderer::vulkan::{ImageInfo, ImageType},
+    },
     utils::{Buffer, Size},
 };
 
@@ -233,6 +236,7 @@ impl VulkanRenderer {
             // Initialize with a refcount of 1 since a new image handle is being created.
             refcount: Arc::new(AtomicUsize::new(1)),
             flipped,
+            ty: ImageType::Mem,
             // Image creation was successful, disarm the scope guards.
             image: ScopeGuard::into_inner(image),
             underlying_memory: Some(ImageAllocationType::Allocator(ScopeGuard::into_inner(allocation))),

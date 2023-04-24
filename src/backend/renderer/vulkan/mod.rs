@@ -382,7 +382,12 @@ impl ImportMem for VulkanRenderer {
         // In theory bpp / 8 could be technically wrong if the bpp had with a remainder when divided by 8
         let copy_size = (bpp / 8) * region.size.w as usize * region.size.h as usize;
 
-        // TODO: Forbid non ImportMem buffers.
+        let image = self.images.get(&texture.id).expect("TODO: Handle error");
+
+        if !matches!(image.ty, ImageType::Mem) {
+            todo!("Incorrect image type")
+        }
+
         self.init_staging()?;
 
         // Initializing the staging buffers can fail, defer incrementing the refcount until after the staging
@@ -886,6 +891,18 @@ enum ImageAllocationType {
     // TODO: Imported
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageType {
+    /// ImportMem/ImportMemWl backed image.
+    Mem,
+
+    /// ImportDma/ImportDmaWl backed image.
+    Dmabuf,
+
+    /// An externally created image. Smithay does not own this image.
+    External,
+}
+
 struct ImageInfo {
     /// The internal id of the image.
     id: u64,
@@ -901,6 +918,8 @@ struct ImageInfo {
 
     /// Whether the imaqe contents should be flipped on upload.
     flipped: bool,
+
+    ty: ImageType,
 
     /// The underlying image resource.
     image: vk::Image,
