@@ -25,5 +25,6 @@ fn main() {
         )
         .expect("Failed to create image");
 
-    renderer.submit_staging_buffers().unwrap();
+    // Wait for the command to complete.
+    renderer.submit_staging_buffers().unwrap().wait();
 }

@@ -21,6 +21,11 @@ mod staging;
 // - VK_KHR_external_memory_fd
 // - VK_EXT_external_memory_dma_buf
 // - VK_EXT_image_drm_format_modifier
+//
+// Required for SyncPoint export and import
+// - VK_KHR_external_fence_fd
+//
+// Possibly VK_KHR_external_semaphore_fd
 
 use std::{
     array,
@@ -29,16 +34,18 @@ use std::{
     mem::ManuallyDrop,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Weak,
     },
 };
 
 use ash::{extensions::ext, vk};
+use bitflags::bitflags;
 use drm_fourcc::DrmFourcc;
 use gpu_allocator::{
     vulkan::{Allocation, Allocator, AllocatorCreateDesc},
     AllocatorDebugSettings,
 };
+use wayland_backend::io_lifetimes::OwnedFd;
 
 use crate::{
     backend::{
@@ -48,7 +55,22 @@ use crate::{
     utils::{Buffer, Physical, Rectangle, Size, Transform},
 };
 
-use super::{DebugFlags, ExportMem, Frame, ImportMem, Renderer, Texture, TextureFilter, TextureMapping};
+use super::{
+    sync::{Fence, SyncPoint},
+    DebugFlags, ExportMem, Frame, ImportMem, Renderer, Texture, TextureFilter, TextureMapping,
+};
+
+bitflags! {
+    /// Renderer capabilities.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Capabilities: u32 {
+        /// Whether the renderer can import and or export [`Dmabuf`] memory objects.
+        const DMABUF_MEMORY = 0x01;
+
+        /// Whether the renderer can import and or export a sync fd from a fence for use in a [`SyncPoint`].
+        const SYNC_FD_FENCE = 0x02;
+    }
+}
 
 pub struct VulkanRenderer {
     images: HashMap<u64, ImageInfo>,
@@ -137,6 +159,11 @@ const MEM_FORMATS: &[DrmFourcc] = &[
 ];
 
 impl VulkanRenderer {
+    /// Query the capabilities of a renderer with the given device.
+    pub fn supported_capabilities(_device: &PhysicalDevice) -> Result<Capabilities, VulkanError> {
+        todo!()
+    }
+
     pub fn new(device: &PhysicalDevice) -> Result<Self, VulkanError> {
         // The Vulkan specification says the following in the specification about VkMemoryDedicatedRequirements:
         // > requiresDedicatedAllocation may be VK_TRUE if the image’s tiling is VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT.
@@ -273,11 +300,11 @@ impl VulkanRenderer {
         Ok(renderer)
     }
 
-    pub fn submit_staging_buffers(&mut self) -> Result<(), VulkanError> {
+    pub fn submit_staging_buffers(&mut self) -> Result<SyncPoint, VulkanError> {
         // TODO: Return a syncobj
         let Some(Staging { command_buffer, uploads, upload_buffer, upload_overflow }) = self.staging.take() else {
             // Nothing to submit
-            return Ok(());
+            return Ok(SyncPoint::signaled());
         };
 
         // VUID-vkQueueSubmit-pCommandBuffers-00070: Finish recording the command buffer
@@ -288,6 +315,7 @@ impl VulkanRenderer {
             .build();
 
         // FIXME: What if submitting fails? How are we supposed to respond
+        // TODO: Create a fence to use in the returned sync point
         unsafe {
             self.device
                 .queue_submit(self.queue, array::from_ref(&submit_info), vk::Fence::null())
@@ -303,7 +331,8 @@ impl VulkanRenderer {
 
         self.executing.push_back(submission);
 
-        Ok(())
+        // TODO: Return a sync point that can be waited on.
+        Ok(SyncPoint::signaled())
     }
 }
 
@@ -553,7 +582,8 @@ impl ExportMem for VulkanRenderer {
     fn copy_framebuffer(
         &mut self,
         _region: Rectangle<i32, Buffer>,
-    ) -> Result<Self::TextureMapping, Self::Error> {
+        _format: DrmFourcc,
+    ) -> Result<Self::TextureMapping, <Self as Renderer>::Error> {
         todo!()
     }
 
@@ -561,6 +591,7 @@ impl ExportMem for VulkanRenderer {
         &mut self,
         _texture: &Self::TextureId,
         _region: Rectangle<i32, Buffer>,
+        _format: DrmFourcc,
     ) -> Result<Self::TextureMapping, Self::Error> {
         todo!()
     }
@@ -667,6 +698,15 @@ impl<'frame> Frame for VulkanFrame<'frame> {
         todo!()
     }
 
+    fn draw_solid(
+        &mut self,
+        _dst: Rectangle<i32, Physical>,
+        _damage: &[Rectangle<i32, Physical>],
+        _color: [f32; 4],
+    ) -> Result<(), Self::Error> {
+        todo!()
+    }
+
     fn render_texture_from_to(
         &mut self,
         _texture: &Self::TextureId,
@@ -683,7 +723,7 @@ impl<'frame> Frame for VulkanFrame<'frame> {
         todo!()
     }
 
-    fn finish(self) -> Result<(), Self::Error> {
+    fn finish(self) -> Result<SyncPoint, Self::Error> {
         todo!()
     }
 }
@@ -854,6 +894,38 @@ impl VulkanRenderer {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct VulkanFence {
+    /// Weak reference so that the fence is invalid when the renderer is dropped.
+    device: Weak<ash::Device>,
+}
+
+impl Fence for VulkanFence {
+    fn is_signaled(&self) -> bool {
+        // Assume the fence is signalled if the renderer was dropped.
+        self.device.strong_count() == 0
+        // TODO: Check if fence is signalled.
+    }
+
+    fn wait(&self) {
+        // Renderer was dropped, no reason to wait forever.
+        if self.device.strong_count() == 0 {
+            return;
+        }
+
+        todo!()
+    }
+
+    fn is_exportable(&self) -> bool {
+        self.device.strong_count() == 0
+        // TODO: Check the capabilities.
+    }
+
+    fn export(&self) -> Option<OwnedFd> {
+        todo!()
     }
 }
 
