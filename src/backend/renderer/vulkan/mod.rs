@@ -1,3 +1,10 @@
+//! Renderer implementation using Vulkan.
+//!
+//! The [`VulkanRenderer`] requires the following extensions:
+//! - `VK_KHR_dedicated_allocation`
+//!
+//! 
+
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(missing_docs)]
 
@@ -45,7 +52,7 @@ use gpu_allocator::{
     vulkan::{Allocation, Allocator, AllocatorCreateDesc},
     AllocatorDebugSettings,
 };
-use wayland_backend::io_lifetimes::OwnedFd;
+use std::os::fd::OwnedFd;
 
 use crate::{
     backend::{
@@ -630,6 +637,7 @@ impl TextureMapping for VulkanTextureMapping {
 #[derive(Debug, thiserror::Error)]
 pub enum VulkanError {}
 
+/// Handle to an image belonging to a [`VulkanRenderer`].
 #[derive(Debug)]
 pub struct VulkanImage {
     id: u64,
@@ -897,6 +905,7 @@ impl VulkanRenderer {
     }
 }
 
+/// A fence to used signal completion of work by the renderer.
 #[derive(Debug)]
 pub struct VulkanFence {
     /// Weak reference so that the fence is invalid when the renderer is dropped.

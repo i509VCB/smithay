@@ -1,0 +1,139 @@
+{
+    "$schema": 	"https://schema.khronos.org/vulkan/profiles-0.8.1-255.json#",
+    "capabilities": {
+        "baseline": {
+            "extensions": {
+                "VK_KHR_get_physical_device_properties2": 1,
+                "VK_KHR_timeline_semaphore": 1
+            },
+            "formats": {
+                "VK_FORMAT_B8G8R8A8_SRGB": {
+                    "VkFormatProperties": {
+                        "linearTilingFeatures": [],
+                        "optimalTilingFeatures": [
+                            "VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT",
+                            "VK_FORMAT_FEATURE_TRANSFER_SRC_BIT",
+                            "VK_FORMAT_FEATURE_TRANSFER_DST_BIT"
+                        ],
+                        "bufferFeatures": []
+                    }
+                }
+            },
+            "queueFamiliesProperties": []
+        },
+        "dmabuf_memory": {
+            "extensions": {
+                "VK_KHR_external_memory_capabilities": 1,
+                "VK_KHR_external_memory": 1,
+                "VK_KHR_external_memory_fd": 1,
+                "VK_EXT_external_memory_dma_buf": 1,
+
+                "VK_KHR_bind_memory2": 1,
+                "VK_KHR_dedicated_allocation": 1,
+                "VK_KHR_sampler_ycbcr_conversion": 1,
+                "VK_KHR_image_format_list": 1,
+                "VK_EXT_image_drm_format_modifier": 1,
+
+                "VK_EXT_queue_family_foreign": 1
+            },
+            "properties": {},
+            "features": {},
+            "queueFamiliesProperties": []
+        },
+        "external_fence": {
+            "extensions": {
+                "VK_KHR_external_fence_capabilities": 1,
+                "VK_KHR_external_fence": 1,
+                "VK_KHR_external_fence_fd": 1
+            },
+            "properties": {},
+            "features": {},
+            "queueFamiliesProperties": []
+        },
+        "maintenance": {
+            "extensions": {
+                "VK_KHR_maintenance4": 1
+            },
+            "properties": {},
+            "features": {},
+            "queueFamiliesProperties": []
+        },
+        "driver_info": {
+            "extensions": {
+                "VK_KHR_driver_properties": 1
+            },
+            "properties": {},
+            "features": {},
+            "queueFamiliesProperties": []
+        },
+        "drm_device": {
+            "extensions": {
+                "VK_EXT_physical_device_drm": 1
+            },
+            "properties": {
+                "VkPhysicalDeviceDrmPropertiesEXT": {
+                    "hasRender": true
+                }
+            },
+            "features": {},
+            "queueFamiliesProperties": []
+        },
+        "drm_device_primary": {
+            "extensions": {
+                "VK_EXT_physical_device_drm": 1
+            },
+            "properties": {
+                "VkPhysicalDeviceDrmPropertiesEXT": {
+                    "hasRender": true,
+                    "hasPrimary": true
+                }
+            },
+            "features": {},
+            "queueFamiliesProperties": []
+        },
+        "debug_info": {
+            "extensions": {
+                "VK_EXT_debug_utils": 1
+            },
+            "properties": {},
+            "features": {},
+            "queueFamiliesProperties": []
+        }
+    },
+    "profiles": {
+        "VP_SMITHAY_vulkan_renderer": {
+            "version": 1,
+            "status": "ALPHA",
+            "api-version": "1.0.255",
+            "label": "Smithay Vulkan renderer profile",
+            "description": "This profile is used to measure the devices which are capable of using Smithay's Vulkan renderer",
+            "contributors": {
+                "i509VCB": {
+                    "company": "Independent",
+                    "email": "mail@i509.me",
+                    "contact": true
+                }
+            },
+            "history": [
+                {
+                    "revision": 1,
+                    "date": "2099-01-01",
+                    "author": "i509VCB",
+                    "comment": "Initial revision"
+                }
+            ],
+            "capabilities": [
+                "baseline"
+            ],
+            "optionals": [
+                "dmabuf_memory",
+                "external_fence",
+                "maintenance",
+                "driver_info",
+                "drm_device",
+                "drm_device_primary",
+                "debug_info"
+            ]
+        }
+    }
+}
