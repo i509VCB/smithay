@@ -1,9 +1,4 @@
 //! Renderer implementation using Vulkan.
-//!
-//! The [`VulkanRenderer`] requires the following extensions:
-//! - `VK_KHR_dedicated_allocation`
-//!
-//! 
 
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(missing_docs)]
@@ -167,8 +162,40 @@ const MEM_FORMATS: &[DrmFourcc] = &[
 
 impl VulkanRenderer {
     /// Query the capabilities of a renderer with the given device.
-    pub fn supported_capabilities(_device: &PhysicalDevice) -> Result<Capabilities, VulkanError> {
-        todo!()
+    pub fn supported_capabilities(device: &PhysicalDevice) -> Result<Capabilities, VulkanError> {
+        // Required extensions and features
+        if !device.has_device_extension(vk::KhrTimelineSemaphoreFn::name()) {
+            todo!()
+        }
+
+        // TODO: Check that VK_FORMAT_B8G8R8A8_SRGB supports SAMPLED_IMAGE, TRANSFER_DST and TRANSFER_SRC.
+        //       for Argb8888 and Xrgb8888
+
+        let mut capabilities = Capabilities::empty();
+
+        if device.has_device_extension(vk::KhrExternalMemoryCapabilitiesFn::name())
+            && device.has_device_extension(vk::KhrExternalMemoryFn::name())
+            && device.has_device_extension(vk::KhrExternalMemoryFdFn::name())
+            && device.has_device_extension(vk::ExtExternalMemoryDmaBufFn::name())
+            && device.has_device_extension(vk::KhrBindMemory2Fn::name())
+            && device.has_device_extension(vk::KhrDedicatedAllocationFn::name())
+            && device.has_device_extension(vk::KhrSamplerYcbcrConversionFn::name())
+            && device.has_device_extension(vk::KhrImageFormatListFn::name())
+            && device.has_device_extension(vk::ExtImageDrmFormatModifierFn::name())
+            && device.has_device_extension(vk::ExtQueueFamilyForeignFn::name())
+        {
+            capabilities |= Capabilities::DMABUF_MEMORY;
+        }
+
+        if device.has_device_extension(vk::KhrExternalFenceCapabilitiesFn::name())
+            && device.has_device_extension(vk::KhrExternalFenceFn::name())
+            && device.has_device_extension(vk::KhrExternalFenceFdFn::name())
+        {
+            // TODO: Extensions aren't enough, the device also needs to support the sync fd handle type
+            capabilities |= Capabilities::SYNC_FD_FENCE;
+        }
+
+        Ok(capabilities)
     }
 
     pub fn new(device: &PhysicalDevice) -> Result<Self, VulkanError> {
