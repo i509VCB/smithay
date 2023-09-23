@@ -1,0 +1,15 @@
+[package]
+name = "smithay-vulkan-renderer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ash = "0.37.3"
+bitflags = "2.2.1"
+gpu-alloc = "0.6.0"
+tracing = "0.1.37"
+
+[dependencies.smithay]
+path = "../"
+default-features = false
+features = []

@@ -19,6 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [workspace]
 members = [
     "smithay-drm-extras",
+    "smithay-vulkan-renderer",
     "smallvil",
     "anvil",
     "wlcs_anvil"
