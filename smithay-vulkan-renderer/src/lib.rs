@@ -1,10 +1,36 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use std::{ffi::CStr, mem, sync::Arc};
+use std::{
+    ffi::CStr,
+    fmt::{self, Display},
+    mem,
+    sync::Arc,
+};
 
 use ash::vk;
 use bitflags::bitflags;
 use gpu_alloc::GpuAllocator;
+use smithay::{
+    backend::{
+        allocator::Fourcc,
+        renderer::{sync::SyncPoint, DebugFlags, Frame, Renderer, Texture, TextureFilter},
+    },
+    utils::{Buffer, Physical, Rectangle, Size, Transform},
+};
+
+mod format;
+mod pipeline;
+
+#[derive(Debug)]
+pub enum VulkanError {}
+
+impl Display for VulkanError {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+impl std::error::Error for VulkanError {}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -47,6 +73,19 @@ pub struct VulkanRenderer {
     queue: vk::Queue,
     device: Arc<ash::Device>,
     physical_device: vk::PhysicalDevice,
+}
+
+impl fmt::Debug for VulkanRenderer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VulkanRenderer")
+            .field("span", &self.span)
+            .field("capabilities", &self.capabilities)
+            .field("mem_allocator", &self.mem_allocator)
+            .field("queue", &self.queue)
+            .field("device", &self.device.handle())
+            .field("physical_device", &self.physical_device)
+            .finish()
+    }
 }
 
 impl VulkanRenderer {
@@ -290,11 +329,101 @@ impl VulkanRenderer {
     }
 }
 
+impl Renderer for VulkanRenderer {
+    type Error = VulkanError;
+    type TextureId = VulkanImage;
+    type Frame<'frame> = VulkanFrame<'frame>;
+
+    fn id(&self) -> usize {
+        todo!()
+    }
+
+    fn downscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn upscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn set_debug_flags(&mut self, _flags: DebugFlags) {
+        todo!()
+    }
+
+    fn debug_flags(&self) -> DebugFlags {
+        todo!()
+    }
+
+    fn render(
+        &mut self,
+        _output_size: Size<i32, Physical>,
+        _dst_transform: Transform,
+    ) -> Result<Self::Frame<'_>, Self::Error> {
+        todo!()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VulkanImage {}
 
-pub struct VulkanFrame<'a> {
-    renderer: &'a mut VulkanRenderer,
+impl Texture for VulkanImage {
+    fn width(&self) -> u32 {
+        todo!()
+    }
+
+    fn height(&self) -> u32 {
+        todo!()
+    }
+
+    fn format(&self) -> Option<Fourcc> {
+        todo!()
+    }
+}
+
+pub struct VulkanFrame<'frame> {
+    _renderer: &'frame mut VulkanRenderer,
+}
+
+impl Frame for VulkanFrame<'_> {
+    type Error = VulkanError;
+    type TextureId = VulkanImage;
+
+    fn id(&self) -> usize {
+        todo!()
+    }
+
+    fn clear(&mut self, _color: [f32; 4], _at: &[Rectangle<i32, Physical>]) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn draw_solid(
+        &mut self,
+        _dst: Rectangle<i32, Physical>,
+        _damage: &[Rectangle<i32, Physical>],
+        _color: [f32; 4],
+    ) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn render_texture_from_to(
+        &mut self,
+        _texture: &Self::TextureId,
+        _src: Rectangle<f64, Buffer>,
+        _dst: Rectangle<i32, Physical>,
+        _damage: &[Rectangle<i32, Physical>],
+        _src_transform: Transform,
+        _alpha: f32,
+    ) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn transformation(&self) -> Transform {
+        todo!()
+    }
+
+    fn finish(self) -> Result<SyncPoint, Self::Error> {
+        todo!()
+    }
 }
 
 /// # Safety
