@@ -1,10 +1,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::{
+    collections::HashMap,
     ffi::CStr,
     fmt::{self, Display},
     mem,
-    sync::Arc,
+    os::fd::OwnedFd,
+    sync::{Arc, Weak},
+    time::Duration,
 };
 
 use ash::vk;
@@ -13,9 +16,16 @@ use gpu_alloc::GpuAllocator;
 use smithay::{
     backend::{
         allocator::Fourcc,
-        renderer::{sync::SyncPoint, DebugFlags, Frame, Renderer, Texture, TextureFilter},
+        renderer::{
+            sync::{Fence, SyncPoint},
+            DebugFlags, Frame, Renderer, Texture, TextureFilter,
+        },
     },
     utils::{Buffer, Physical, Rectangle, Size, Transform},
+};
+use tracing::{
+    span::{self, EnteredSpan},
+    Level,
 };
 
 mod format;
@@ -62,12 +72,17 @@ pub struct InstanceRequirements {
 pub struct DeviceRequirements {
     /// Device extensions that must be enabled.
     pub extensions: Vec<&'static CStr>,
+    // TODO: Fields for features such as:
+    // - samplerYcbcrConversion
 }
 
 pub struct VulkanRenderer {
     span: tracing::Span,
     capabilities: Capabilities,
 
+    samplers: HashMap<SamplerKey, vk::Sampler>,
+    min_filter: TextureFilter,
+    max_filter: TextureFilter,
     // GpuAllocator is boxed up due to the significant size.
     mem_allocator: Box<GpuAllocator<vk::DeviceMemory>>,
     queue: vk::Queue,
@@ -277,12 +292,16 @@ impl VulkanRenderer {
                 // Or Vulkan 1.2
                 vk::KhrImageFormatListFn::name(),
                 // Or Vulkan 1.1
-                vk::KhrSamplerYcbcrConversionFn::name(), // TODO: v3dv?
                 vk::KhrBindMemory2Fn::name(),
                 vk::KhrMaintenance1Fn::name(),
                 vk::KhrGetMemoryRequirements2Fn::name(),
                 vk::KhrExternalMemoryFn::name(),
             ]);
+
+            if device_api_version < vk::API_VERSION_1_1 {
+                // For v3dv do not require ycbcr conversion if Vulkan 1.1+ is used
+                extensions.push(vk::KhrSamplerYcbcrConversionFn::name());
+            }
 
             // VK_KHR_dedicated_allocation is needed to handle disjoint dmabuf import: require if available.
             if find_extension(&supported_extensions, vk::KhrDedicatedAllocationFn::name()) {
@@ -327,6 +346,19 @@ impl VulkanRenderer {
     pub fn capabilities(&self) -> Capabilities {
         self.capabilities
     }
+
+    #[profiling::function]
+    pub fn import_fence(&mut self, _fd: OwnedFd) -> Result<VulkanFence, VulkanError> {
+        todo!()
+    }
+
+    /// Create a new fence.
+    ///
+    /// If the EXPORT_FENCE capability is supported, then the fence can be exported.
+    #[profiling::function]
+    pub fn create_fence(&mut self) -> Result<VulkanFence, VulkanError> {
+        todo!()
+    }
 }
 
 impl Renderer for VulkanRenderer {
@@ -338,12 +370,14 @@ impl Renderer for VulkanRenderer {
         todo!()
     }
 
-    fn downscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
-        todo!()
+    fn downscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
+        self.min_filter = filter;
+        Ok(())
     }
 
-    fn upscale_filter(&mut self, _filter: TextureFilter) -> Result<(), Self::Error> {
-        todo!()
+    fn upscale_filter(&mut self, filter: TextureFilter) -> Result<(), Self::Error> {
+        self.max_filter = filter;
+        Ok(())
     }
 
     fn set_debug_flags(&mut self, _flags: DebugFlags) {
@@ -359,7 +393,49 @@ impl Renderer for VulkanRenderer {
         _output_size: Size<i32, Physical>,
         _dst_transform: Transform,
     ) -> Result<Self::Frame<'_>, Self::Error> {
-        todo!()
+        // Load sampler for descriptors based on set filters.
+        let _sampler = self
+            .samplers
+            .get(&SamplerKey {
+                min_filter: self.min_filter,
+                max_filter: self.max_filter,
+            })
+            .copied()
+            .unwrap();
+
+        // TODO: Framebuffer and Renderpass setup
+
+        // TODO: Descriptor writes
+
+        let span = tracing::span!(parent: &self.span, Level::DEBUG, "renderer_vulkan_frame").entered();
+
+        Ok(VulkanFrame {
+            renderer: self,
+            _span: span,
+        })
+    }
+
+    #[profiling::function]
+    fn wait(&mut self, sync: &SyncPoint) -> Result<(), Self::Error> {
+        if let Some(_fence) = sync.get::<VulkanFence>() {
+            // The fence is indeed from a vulkan renderer, check if it is from ours.
+            todo!()
+        }
+
+        // TODO: Check if the sync point contains a fence belonging to the same device.
+        if let Some(_native) = self
+            .capabilities
+            .contains(Capabilities::IMPORT_FENCE)
+            .then(|| sync.export())
+            .flatten()
+        {
+            todo!("Import fence and try to wait")
+        }
+
+        // if everything above failed we can only
+        // block until the sync point has been reached
+        sync.wait();
+        Ok(())
     }
 }
 
@@ -381,7 +457,8 @@ impl Texture for VulkanImage {
 }
 
 pub struct VulkanFrame<'frame> {
-    _renderer: &'frame mut VulkanRenderer,
+    renderer: &'frame mut VulkanRenderer,
+    _span: EnteredSpan,
 }
 
 impl Frame for VulkanFrame<'_> {
@@ -424,6 +501,63 @@ impl Frame for VulkanFrame<'_> {
     fn finish(self) -> Result<SyncPoint, Self::Error> {
         todo!()
     }
+}
+
+#[derive(Debug)]
+pub struct VulkanFence {
+    // TODO: Drop handling?
+    fence: vk::Fence,
+    device: Weak<ash::Device>,
+}
+
+impl VulkanFence {
+    #[profiling::function]
+    pub fn wait_with_timeout(&self, timeout: Option<Duration>) -> bool {
+        let timeout = timeout.map(|t| t.as_nanos() as u64).unwrap_or(u64::MAX);
+
+        if let Some(device) = self.device.upgrade() {
+            let result = unsafe { device.wait_for_fences(&[self.fence], true, timeout) };
+            return result != Err(vk::Result::TIMEOUT);
+        }
+
+        // Device no longer exists, assume the fence is signalled.
+        true
+    }
+}
+
+impl Fence for VulkanFence {
+    #[profiling::function]
+    fn is_signaled(&self) -> bool {
+        let Some(device) = self.device.upgrade() else {
+            // Let's assume the fence was signalled if the device no longer exists
+            return true;
+        };
+
+        unsafe { device.get_fence_status(self.fence) }
+            .ok()
+            // If the device was lost assume the fence is dead and say it is signalled.
+            .unwrap_or(true)
+    }
+
+    #[profiling::function]
+    fn wait(&self) {
+        let _ = self.wait_with_timeout(None);
+    }
+
+    fn is_exportable(&self) -> bool {
+        false // TODO: Not yet
+    }
+
+    #[profiling::function]
+    fn export(&self) -> Option<OwnedFd> {
+        None // TODO: Not yet
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SamplerKey {
+    min_filter: TextureFilter,
+    max_filter: TextureFilter,
 }
 
 /// # Safety
